@@ -1,0 +1,13 @@
+[project]
+name = "steward-fixtures"
+version = "0.1.0"
+description = "Synthetic work and personal data for the Steward demo, with planted details"
+authors = [
+    { name = "VDT37", email = "dharantejansst@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = []
+
+[build-system]
+requires = ["uv_build>=0.13.0,<0.14.0"]
+build-backend = "uv_build"

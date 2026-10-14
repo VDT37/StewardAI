@@ -1,0 +1,35 @@
+[project]
+name = "stewardai"
+version = "0.1.0"
+description = "Steward: a gatekeeper between the AI agents you run and the models, tools and other agents they reach"
+requires-python = ">=3.12"
+dependencies = []
+
+[tool.uv.workspace]
+members = [
+    "apps/gateway",
+    "packages/fixtures",
+]
+
+[dependency-groups]
+dev = [
+    "mypy>=2.4.0",
+    "pytest>=9.1.1",
+    "ruff>=0.17.0",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["apps/gateway/src", "packages/fixtures/src"]
+
+[tool.pytest.ini_options]
+testpaths = ["apps", "packages"]
+addopts = "--import-mode=importlib"

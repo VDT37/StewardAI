@@ -1,0 +1,27 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+node_modules/
+dist/
+# Secrets and local state, never commit
+.env
+.env.*
+*.env
+!.env.example
+!*.env.example
+*.pem
+var/
+# Editors, OS, Office lock files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+~$*
+
+docs/phases/
+# Word originals stay local; the markdown copies in docs/ are committed
+*.docx
