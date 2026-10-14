@@ -125,6 +125,7 @@ The VM, OpenShell and agent setup are not scripted yet. They will be documented 
 
 ## Docs
 
+- [Demo story: the Manchester trip](docs/demo-story.md)
 - [Features](docs/features.md)
 - [Questions and doubts](docs/questions-and-doubts.md)
 - [Feedback log](FEEDBACK.md)

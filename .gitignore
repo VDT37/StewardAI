@@ -21,6 +21,7 @@ var/
 .DS_Store
 Thumbs.db
 ~$*
+~WRL*.tmp
 
 docs/phases/
 # Word originals stay local; the markdown copies in docs/ are committed

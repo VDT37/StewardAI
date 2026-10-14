@@ -1,0 +1,32 @@
+{
+  "side": "personal",
+  "source": "personal agent's private profile (synthetic)",
+  "travel_limits": [
+    {
+      "id": "limit-no-early-departures",
+      "rule": "no_departures_before",
+      "value": "09:00",
+      "applies_to": "weekdays",
+      "reason": "School run with Maya every weekday morning"
+    }
+  ],
+  "dietary": [
+    {
+      "id": "diet-vegetarian",
+      "need": "vegetarian",
+      "reason": "Religious reasons"
+    }
+  ],
+  "access": [
+    {
+      "id": "access-step-free",
+      "need": "step_free_access",
+      "reason": "Recovering from knee surgery until December"
+    }
+  ],
+  "home_address": {
+    "line1": "27 Ashdown Road",
+    "city": "Exeter",
+    "postcode": "EX2 9ZZ"
+  }
+}

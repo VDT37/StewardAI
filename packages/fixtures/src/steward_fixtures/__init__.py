@@ -1,1 +1,41 @@
 """Synthetic work and personal data for the Steward demo, with planted details."""
+
+from steward_fixtures.loader import (
+    ANCHOR_ENV,
+    FIXTURE_FILES,
+    REPLAY_ANCHOR,
+    TZ,
+    CalendarEvent,
+    MailMessage,
+    ScriptedChange,
+    at,
+    calendar_events,
+    events_between,
+    expand_event,
+    find_planted,
+    load_raw,
+    mail_messages,
+    overnight_changes,
+    planted_details,
+    resolve_anchor,
+)
+
+__all__ = [
+    "ANCHOR_ENV",
+    "FIXTURE_FILES",
+    "REPLAY_ANCHOR",
+    "TZ",
+    "CalendarEvent",
+    "MailMessage",
+    "ScriptedChange",
+    "at",
+    "calendar_events",
+    "events_between",
+    "expand_event",
+    "find_planted",
+    "load_raw",
+    "mail_messages",
+    "overnight_changes",
+    "planted_details",
+    "resolve_anchor",
+]

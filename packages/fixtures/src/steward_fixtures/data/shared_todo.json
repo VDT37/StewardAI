@@ -1,0 +1,42 @@
+{
+  "side": "shared",
+  "source": "shared to-do list that both agents may read and write (synthetic)",
+  "items": [
+    {
+      "id": "todo-pack",
+      "title": "Pack for the Manchester trip",
+      "done": false,
+      "version": 1,
+      "last_modified_by": "you",
+      "last_modified_day": -1,
+      "last_modified_time": "18:00"
+    },
+    {
+      "id": "todo-expenses",
+      "title": "Submit September expenses",
+      "done": false,
+      "version": 1,
+      "last_modified_by": "you",
+      "last_modified_day": -1,
+      "last_modified_time": "18:00"
+    },
+    {
+      "id": "todo-present",
+      "title": "Buy a birthday present",
+      "done": false,
+      "version": 1,
+      "last_modified_by": "you",
+      "last_modified_day": -1,
+      "last_modified_time": "18:00"
+    },
+    {
+      "id": "todo-insurance",
+      "title": "Renew car insurance",
+      "done": false,
+      "version": 1,
+      "last_modified_by": "you",
+      "last_modified_day": -1,
+      "last_modified_time": "18:00"
+    }
+  ]
+}

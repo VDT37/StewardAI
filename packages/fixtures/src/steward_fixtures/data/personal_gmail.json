@@ -1,0 +1,67 @@
+{
+  "side": "personal",
+  "source": "personal Gmail (synthetic)",
+  "timezone": "Europe/London",
+  "messages": [
+    {
+      "id": "p-msg-hospital",
+      "day": -9,
+      "time": "11:20",
+      "from": "Exeter Riverside Hospital <appointments@exeter-riverside-hospital.example>",
+      "to": "you@personalmail.example",
+      "subject": "Appointment confirmed: Cardiology, Wednesday 14:15",
+      "body": "Your cardiology follow-up with Dr Shah is confirmed for Wednesday at 14:15, Outpatients B. Please bring a list of your current medication. If you miss this appointment the next available slot is in about four months.",
+      "body_html": null,
+      "labels": ["inbox", "health"],
+      "trust": "external"
+    },
+    {
+      "id": "p-msg-school",
+      "day": -5,
+      "time": "16:02",
+      "from": "St Brannock's Primary <office@stbrannocks.example>",
+      "to": "you@personalmail.example",
+      "subject": "Year 3 drop-off times this term",
+      "body": "A reminder that gates open at 08:30. Maya's class starts at 08:45.",
+      "body_html": null,
+      "labels": ["inbox", "family"],
+      "trust": "external"
+    },
+    {
+      "id": "p-msg-interview",
+      "day": -4,
+      "time": "13:30",
+      "from": "Northwind Analytics Talent <talent@northwind-analytics.example>",
+      "to": "you@personalmail.example",
+      "subject": "Final interview invitation",
+      "body": "We would like to invite you to a final interview for the Head of Data role next Wednesday at 14:00 by video.",
+      "body_html": null,
+      "labels": ["inbox", "career"],
+      "trust": "external"
+    },
+    {
+      "id": "p-msg-dentist",
+      "day": -1,
+      "time": "12:00",
+      "from": "Riverside Dental <reception@riverside-dental.example>",
+      "to": "you@personalmail.example",
+      "subject": "Time for your check-up",
+      "body": "You are due a check-up. We have slots on Thursday 22 October at 09:30 or 15:00. Reply to book one.",
+      "body_html": null,
+      "labels": ["inbox", "health"],
+      "trust": "external"
+    },
+    {
+      "id": "p-msg-dinner",
+      "day": -1,
+      "time": "18:15",
+      "from": "Priya <priya@personalmail.example>",
+      "to": "you@personalmail.example",
+      "subject": "Tuesday dinner",
+      "body": "Still on for Tuesday at 7? I booked the Old Firehouse.",
+      "body_html": null,
+      "labels": ["inbox", "friends"],
+      "trust": "external"
+    }
+  ]
+}
