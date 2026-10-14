@@ -25,3 +25,5 @@ Thumbs.db
 docs/phases/
 # Word originals stay local; the markdown copies in docs/ are committed
 *.docx
+
+STATE.md
