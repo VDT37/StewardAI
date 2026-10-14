@@ -1,0 +1,22 @@
+{
+  "description": "Fixed travel options for the Manchester trip, so replays do not depend on a live timetable. Times are local (Europe/London); the train options are for day 3 (Thursday). Synthetic, not a real timetable.",
+  "timezone": "Europe/London",
+  "trains": [
+    {"id": "train-0752", "day": 3, "from": "Exeter St Davids", "to": "Manchester Piccadilly", "depart": "07:52", "arrive": "11:55", "price_gbp": 89},
+    {"id": "train-0930", "day": 3, "from": "Exeter St Davids", "to": "Manchester Piccadilly", "depart": "09:30", "arrive": "13:32", "price_gbp": 89},
+    {"id": "train-1130", "day": 3, "from": "Exeter St Davids", "to": "Manchester Piccadilly", "depart": "11:30", "arrive": "15:34", "price_gbp": 89},
+    {"id": "train-1330", "day": 3, "from": "Exeter St Davids", "to": "Manchester Piccadilly", "depart": "13:30", "arrive": "17:36", "price_gbp": 89},
+    {"id": "train-return-1815", "day": 3, "from": "Manchester Piccadilly", "to": "Exeter St Davids", "depart": "18:15", "arrive": "22:20", "price_gbp": 0}
+  ],
+  "taxis": [
+    {
+      "id": "taxi-home-to-station",
+      "from": "home address (sent as the stand-in [ADDR-1])",
+      "to": "Exeter St Davids",
+      "minutes": 15,
+      "price_gbp": 14,
+      "pickup_before_departure_minutes": 30
+    }
+  ],
+  "booking_limit_gbp": 300
+}

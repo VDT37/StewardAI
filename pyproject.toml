@@ -25,6 +25,9 @@ target-version = "py312"
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
 
+[tool.ruff.lint.isort]
+known-first-party = ["steward_gateway", "steward_fixtures"]
+
 [tool.mypy]
 python_version = "3.12"
 strict = true
