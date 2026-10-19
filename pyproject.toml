@@ -13,6 +13,7 @@ members = [
 
 [dependency-groups]
 dev = [
+    "httpx>=0.28.1",
     "mypy>=2.4.0",
     "pytest>=9.1.1",
     "ruff>=0.17.0",
@@ -31,7 +32,7 @@ known-first-party = ["steward_gateway", "steward_fixtures"]
 [tool.mypy]
 python_version = "3.12"
 strict = true
-files = ["apps/gateway/src", "packages/fixtures/src"]
+files = ["apps/gateway/src", "packages/fixtures/src", "spikes"]
 
 [tool.pytest.ini_options]
 testpaths = ["apps", "packages"]
