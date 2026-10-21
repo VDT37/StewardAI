@@ -23,8 +23,8 @@
             name: "Nemotron small via Steward",
             reasoning: true,
             input: ["text"],
-            // Conservative until Part F records the served context length.
-            contextWindow: 131072,
+            // Served context length from GET /v1/models?verbose=true (Part F, 21 Oct 2026).
+            contextWindow: 262144,
             maxTokens: 8192,
           },
         ],
