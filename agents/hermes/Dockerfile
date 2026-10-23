@@ -13,8 +13,6 @@ USER ubuntu
 WORKDIR /home/ubuntu
 ENV HOME=/home/ubuntu
 ENV PATH=/home/ubuntu/.local/bin:$PATH
-# The policy denies writes to /var/tmp, and SQLite would try it before /tmp.
-ENV TMPDIR=/tmp SQLITE_TMPDIR=/tmp
 
 # Skip the browser and computer-use tools and the setup wizard.
 RUN curl -fsSL https://hermes-agent.nousresearch.com/install.sh \
