@@ -23,14 +23,18 @@
             name: "Nemotron small via Steward",
             reasoning: true,
             input: ["text"],
-            // Conservative until Part F records the served context length.
-            contextWindow: 131072,
+            // Served context length from GET /v1/models?verbose=true (Part F, 21 Oct 2026).
+            contextWindow: 262144,
             maxTokens: 8192,
           },
         ],
       },
     },
   },
+  // OpenClaw treats a provider on a private address as a local model and hides tools behind
+  // tool_search / tool_call. Nano then often calls the bare MCP tool name, which fails, so
+  // expose the tools directly. Costs about 60k prompt tokens per run (all tool schemas).
+  tools: { toolSearch: false },
   mcp: {
     servers: {
       steward: {

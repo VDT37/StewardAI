@@ -7,7 +7,9 @@ filesystem_policy:
   # (the agent's home, where its install and config live) writable.
   include_workdir: true
   read_only: [/usr, /lib, /bin, /etc, /proc, /dev/urandom, /var/log]
-  read_write: [/tmp, /dev/null]
+  # /var/tmp is the container's own temp folder. SQLite (OpenClaw's agent database) writes
+  # temp files there before trying /tmp, and OpenShell strips TMPDIR, so it must be writable.
+  read_write: [/tmp, /var/tmp, /dev/null]
 landlock:
   # Refuse to start if Landlock cannot be enforced (best_effort would run unenforced).
   compatibility: hard_requirement

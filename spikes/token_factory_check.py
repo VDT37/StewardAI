@@ -76,6 +76,10 @@ class Pricing:
         return f"${usd / 1_000_000:.6f}"
 
 
+def usd(value: float | None) -> str:
+    return "n/a" if value is None else f"${value:.4g}"
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Token Factory or stub pass-through checks.")
     parser.add_argument("--base-url", default=TOKEN_FACTORY_URL)
@@ -347,7 +351,7 @@ def main() -> int:
         pricing = fetch_pricing(client, args.model, args)
         print(
             f"target {base_url}  model {args.model}  context_length {pricing.context_length}  "
-            f"price in/out per M: {pricing.per_m_in} / {pricing.per_m_out}"
+            f"price in/out per M: {usd(pricing.per_m_in)} / {usd(pricing.per_m_out)}"
         )
         for name, check in CHECKS:
             result = Result(name)

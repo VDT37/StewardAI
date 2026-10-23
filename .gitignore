@@ -28,3 +28,6 @@ docs/phases/
 *.docx
 
 STATE.md
+
+# Personal status dashboard, local only
+docs/STATUS.md
