@@ -104,7 +104,7 @@ Token Factory retired several models on 31 Aug 2026. Model IDs are confirmed aga
 | ---------------------------------- | ----------------------------------------------------- |
 | `apps/gateway`                     | Steward gateway: model, tool and agent-to-agent doors |
 | `apps/worker`                      | Watcher, brief, red-team runs                         |
-| `apps/web`                         | Console (not created yet)                             |
+| `apps/web`                         | Console (React, Vite, Tailwind; placeholder until Phase 1) |
 | `packages/core`                    | Request types, rules, checkers, flight log            |
 | `packages/fixtures`                | Synthetic work and personal data with planted details |
 | `agents/openshell`                 | Sandbox policy and Steward provider profiles          |
