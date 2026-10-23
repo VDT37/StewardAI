@@ -15,6 +15,8 @@ RUN npm install -g "openclaw@${OPENCLAW_VERSION}" && npm cache clean --force
 USER node
 WORKDIR /home/node
 ENV HOME=/home/node
+# The policy denies writes to /var/tmp, and SQLite would try it before /tmp.
+ENV TMPDIR=/tmp SQLITE_TMPDIR=/tmp
 
 COPY --chown=node:node openclaw.json /home/node/.openclaw/openclaw.json
 
