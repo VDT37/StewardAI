@@ -43,6 +43,10 @@ ALLOWED_HOSTS = [
     "localhost:*",
 ]
 ALLOWED_ORIGINS = ["http://host.openshell.internal:*", "http://127.0.0.1:*", "http://localhost:*"]
+# The SDK drops an MCP session after 30 idle minutes. Hermes keeps one session for its whole
+# life, and its first call after the drop fails ("outcome UNKNOWN") before it reconnects, so idle
+# sessions are kept for a day instead. OpenClaw opens a fresh session for every run.
+MCP_SESSION_IDLE_S = 24 * 60 * 60
 
 
 def default_adapters(settings: Settings) -> dict[str, Adapter]:
@@ -92,7 +96,11 @@ def create_app(
     )
     # streamable_http_app() must run before session_manager exists.
     tool_apps = {
-        agent: server.streamable_http_app(streamable_http_path="/mcp", transport_security=security)
+        agent: server.streamable_http_app(
+            streamable_http_path="/mcp",
+            transport_security=security,
+            session_idle_timeout=MCP_SESSION_IDLE_S,
+        )
         for agent, server in tool_door.servers.items()
     }
 
