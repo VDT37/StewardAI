@@ -23,7 +23,7 @@ from mcp.client import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 from mcp.types import CallToolResult, TextContent
 
-TOOL = "list_calendar_events"
+TOOL = "calendar_list_events"
 
 
 def parse_args() -> argparse.Namespace:
@@ -32,10 +32,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pass-env", required=True)
     parser.add_argument("--start-date", default="2026-10-12")
     parser.add_argument("--end-date", default="2026-10-15")
+    parser.add_argument("--ask-type", help="call ask with this request type instead")
     return parser.parse_args()
 
 
-async def call_tool(url: str, token: str, start: str, end: str) -> tuple[list[str], CallToolResult]:
+async def call_tool(
+    url: str, token: str, tool: str, arguments: dict[str, object]
+) -> tuple[list[str], CallToolResult]:
     # The 5 s httpx default is too short for a tool call; the SDK reads the stream for longer.
     timeout = httpx2.Timeout(30.0, read=300.0)
     headers = {"Authorization": f"Bearer {token}"}
@@ -44,7 +47,7 @@ async def call_tool(url: str, token: str, start: str, end: str) -> tuple[list[st
             async with ClientSession(read, write) as session:
                 await session.initialize()
                 listed = await session.list_tools()
-                result = await session.call_tool(TOOL, {"start_date": start, "end_date": end})
+                result = await session.call_tool(tool, arguments)
     if not isinstance(result, CallToolResult):
         raise RuntimeError(f"unexpected result type {type(result).__name__}")
     return [tool.name for tool in listed.tools], result
@@ -68,25 +71,43 @@ def main() -> int:
         return 2
     failures: list[str] = []
 
+    dates = {"start_date": args.start_date, "end_date": args.end_date}
+    if args.ask_type:
+        tool = "ask"
+        arguments: dict[str, object] = {
+            "contact": "personal",
+            "request_type": args.ask_type,
+            "fields": dates if args.ask_type == "availability" else {"question": "why busy?"},
+        }
+    else:
+        tool, arguments = TOOL, dict(dates)
     try:
-        names, result = asyncio.run(call_tool(args.url, token, args.start_date, args.end_date))
+        names, result = asyncio.run(call_tool(args.url, token, tool, arguments))
     except Exception as exc:
         print(f"MCP session failed: {type(exc).__name__}: {exc}")
         names, result = [], None
         failures.append("session")
     if result is not None:
         print(f"tools: {names}")
-        if TOOL not in names:
+        if tool not in names:
             failures.append("tool missing")
-        if result.is_error:
-            failures.append("tool error")
         payload = result.structured_content
-        if payload is None:
+        if args.ask_type:
+            status = (payload or {}).get("status")
+            print(f"ask {args.ask_type!r}: status={status} reason={(payload or {}).get('reason')}")
+            expected = "answered" if args.ask_type == "availability" else "refused"
+            if status != expected:
+                failures.append(f"ask status {status}, expected {expected}")
+            if payload and payload.get("summary"):
+                print("summary:", payload["summary"])
+        elif result.is_error:
+            failures.append("tool error")
+        elif payload is None:
             texts = [c.text for c in result.content if isinstance(c, TextContent)]
             print("result (text):", " ".join(texts)[:2000])
         else:
             events = payload.get("events", [])
-            print(f"result: side={payload.get('side')} events={len(events)}")
+            print(f"result: events={len(events)}")
             for event in events:
                 print(f"  {event['start']}  {event['end']}  {event['title']}")
             if not events:

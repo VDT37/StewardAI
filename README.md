@@ -2,7 +2,7 @@
 
 Steward is a self-hosted gatekeeper between the AI agents you run and everything they can reach: models, tools and each other. It is built for the Nebius x NVIDIA Global AI Hackathon, Personal AI track.
 
-Status: Phase 0 (setup and de-risk). Not usable yet. Most folders are empty placeholders.
+Status: Phase 1 (the two doors). The model door, the tool door and the agent-to-agent door (Availability only) run, with a hash-chained flight log and an admin API. Rules that hold and approval cards come in Phase 2.
 
 ## The problem
 
@@ -92,8 +92,8 @@ Token Factory retired several models on 31 Aug 2026. Model IDs are confirmed aga
 
 | Phase                         | Goal                                                                                                  |
 | ----------------------------- | ----------------------------------------------------------------------------------------------------- |
-| 0 (current) Setup and de-risk | Both agents call Nemotron and one tool through a stub Steward inside OpenShell sandboxes.             |
-| 1 The two doors               | Every model call, tool call and agent-to-agent message goes through Steward and lands in the log.     |
+| 0 Setup and de-risk           | Both agents call Nemotron and one tool through a stub Steward inside OpenShell sandboxes.             |
+| 1 (current) The two doors     | Every model call, tool call and agent-to-agent message goes through Steward and lands in the log.     |
 | 2 Rules, holds and approvals  | The Manchester evening runs live and as a replay, and every trap is held or refused.                  |
 | 3 Supervisor and hosted demo  | Overnight watcher and morning brief. Anyone with the link can try replay and playground.              |
 | 4 Proof and ablations         | One command produces a results table comparing code checks with an AI check (Nemotron judge) and Jev. |
@@ -104,24 +104,46 @@ Token Factory retired several models on 31 Aug 2026. Model IDs are confirmed aga
 | ---------------------------------- | ----------------------------------------------------- |
 | `apps/gateway`                     | Steward gateway: model, tool and agent-to-agent doors |
 | `apps/worker`                      | Watcher, brief, red-team runs                         |
-| `apps/web`                         | Console (React, Vite, Tailwind; placeholder until Phase 1) |
+| `apps/web`                         | Console (React, Vite, Tailwind)                       |
 | `packages/core`                    | Request types, rules, checkers, flight log            |
-| `packages/fixtures`                | Synthetic work and personal data with planted details |
+| `packages/fixtures`                | Synthetic work and personal data with planted details, served as MCP tools |
+| `config`                           | The policy file `steward.yaml`                        |
 | `agents/openshell`                 | Sandbox policy and Steward provider profiles          |
 | `agents/hermes`, `agents/openclaw` | Sandbox images and configs                            |
 | `skills`                           | Agent skills                                          |
 | `evals`                            | Traps and ablation runs                               |
 | `deploy`                           | Compose, Caddy later                                  |
-| `spikes`                           | Phase 0 check scripts                                 |
+| `spikes`                           | Check scripts for the live system                     |
 | `docs`                             | Notes, ADRs                                           |
 
 ## Development
 
-Requires uv and Python 3.12. Only the Python workspace works today.
+Requires uv and Python 3.12.
 
-Secrets: copy `.env.example` to `.env` and fill it in yourself. `.env` is gitignored.
+Secrets: copy `.env.example` to `.env` and fill it in yourself. `.env` is gitignored. The policy file `config/steward.yaml` (agents, models, tools, who may ask whom) is committed and holds no secrets; it names the environment variable that holds each agent's pass.
 
-The VM, OpenShell and agent setup are not scripted yet. They will be documented as Phase 0 is built.
+Checks (the same as CI):
+
+```bash
+uv sync --all-packages --locked
+uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run pytest
+```
+
+Run Steward (on the VM, one worker, because open agent-to-agent requests live in memory):
+
+```bash
+uv run --package steward-gateway --env-file .env uvicorn steward_gateway.app:app --host 0.0.0.0 --port 8000
+```
+
+| Route | Who | What |
+| --- | --- | --- |
+| `/v1/models`, `/v1/chat/completions` | agents (pass) | Model door |
+| `/tools/<agent>/mcp` | agents (pass) | Tool door, including `ask` and `reply` |
+| `/admin/*` | owner token | Agents, log, live log stream, chain verify, export, tool pins |
+| `/console` | owner | The web console, served from `apps/web/dist` |
+| `/healthz` | anyone | Health check |
+
+The flight log is one SQLite file (`STEWARD_DB_PATH`, default `var/steward.db`).
 
 ## Docs
 
