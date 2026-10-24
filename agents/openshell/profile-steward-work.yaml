@@ -5,7 +5,7 @@
 #   openshell profile import -f agents/openshell/profile-steward-work.yaml
 id: steward-work
 display_name: Steward (work agent)
-description: Pass for the work agent, valid only at the Steward stub on the host.
+description: Pass for the work agent, valid only at Steward on the host.
 category: inference
 inference_capable: true
 credentials:

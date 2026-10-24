@@ -1,11 +1,11 @@
 // OpenClaw config for the personal agent (JSON5), baked into the image at
-// ~/.openclaw/openclaw.json. The sandbox reaches the Steward stub as host.openshell.internal.
+// ~/.openclaw/openclaw.json. The sandbox reaches Steward as host.openshell.internal.
 // ${STEWARD_PASS_PERSONAL} holds the OpenShell placeholder, never the real pass.
 {
   agents: {
     defaults: {
-      // <provider>/<model id>. The stub forces the personal pass's model anyway;
-      // keep this in step with STEWARD_MODEL_PERSONAL.
+      // <provider>/<model id>. Steward forces the personal pass's model anyway
+      // (config/steward.yaml); keep this in step.
       model: { primary: "steward/nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B" },
     },
   },
@@ -31,10 +31,18 @@
       },
     },
   },
-  // OpenClaw treats a provider on a private address as a local model and hides tools behind
-  // tool_search / tool_call. Nano then often calls the bare MCP tool name, which fails, so
-  // expose the tools directly. Costs about 60k prompt tokens per run (all tool schemas).
-  tools: { toolSearch: false },
+  tools: {
+    // OpenClaw treats a provider on a private address as a local model and hides tools behind
+    // tool_search / tool_call. Nano then often calls the bare MCP tool name, which fails, so
+    // expose the tools directly.
+    toolSearch: false,
+    // agent exec defaults to the "coding" profile (files, shell and more, about 31k prompt
+    // tokens per call in Phase 0). The personal agent only needs Steward's tools: start from
+    // "minimal", add the steward server's tools and deny the two minimal ones.
+    profile: "minimal",
+    alsoAllow: ["steward__*"],
+    deny: ["session_status", "gateway"],
+  },
   mcp: {
     servers: {
       steward: {
@@ -43,7 +51,8 @@
         transport: "streamable-http",
         headers: { Authorization: "Bearer ${STEWARD_PASS_PERSONAL}" },
         connectionTimeoutMs: 10000,
-        requestTimeoutMs: 60000,
+        // The reply tool answers at once, but leave room for slow upstream tools.
+        requestTimeoutMs: 180000,
       },
     },
   },
