@@ -10,6 +10,7 @@ dependencies = [
     "fastapi>=0.149.0",
     "httpx>=0.28.1",
     "mcp>=2.3",
+    "steward-core",
     "steward-fixtures",
     "uvicorn>=0.54.0",
 ]
@@ -19,4 +20,5 @@ requires = ["uv_build>=0.13.0,<0.14.0"]
 build-backend = "uv_build"
 
 [tool.uv.sources]
+steward-core = { workspace = true }
 steward-fixtures = { workspace = true }
