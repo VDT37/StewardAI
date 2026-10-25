@@ -34,6 +34,7 @@ from steward_core.clock import Clock, iso_ms, london_day, parse_iso
 from steward_core.notices import ChangeNotice, Watch, diff, notice_message, recompute
 from steward_core.policy import ContactRule, Policy, exposed_name
 from steward_core.request_types import REQUEST_TYPES, request_message
+from steward_core.rules import FlagBook
 from steward_core.store import Hold, Store
 from steward_fixtures import load_raw
 from steward_gateway.adapters import Adapter
@@ -71,6 +72,8 @@ class ReplyOutcome:
     status: str  # answered, held, no_answer or timeout
     reply: BaseModel | None = None
     reason: str | None = None
+    # When the reply was accepted (its event's time), so flags set from it replay exactly.
+    at: dt.datetime | None = None
 
 
 class AgentToAgentDoor:
@@ -84,9 +87,13 @@ class AgentToAgentDoor:
         holds: HoldBook,
         clock: Clock,
         window: tuple[dt.date, dt.date] | None = None,
+        flags: FlagBook | None = None,
     ) -> None:
         self.policy = policy
         self.store = store
+        # An answer from another agent is the owner's private data: it sets the asker's
+        # private_read flag (the trifecta rule), like reading its own calendar would.
+        self.flags = flags
         self.recorder = recorder
         self.checker = checker
         self.adapters = adapters
@@ -327,6 +334,8 @@ class AgentToAgentDoor:
             return ReplyOutcome("no_answer", reason="no reply in time; nothing was shared"), (
                 request_id
             )
+        if outcome.status == "answered" and self.flags is not None:
+            self.flags.set(asker, "private_read", f"a2a:{request_type}", outcome.at or now)
         if outcome.status == "answered" and isinstance(request, availability.AvailabilityRequest):
             assert isinstance(outcome.reply, availability.AvailabilityReplyOut)
             self.watches.append(
@@ -555,7 +564,7 @@ class AgentToAgentDoor:
             agent=agent,
             at=now,
         )
-        pending.future.set_result(ReplyOutcome("answered", check.reply))
+        pending.future.set_result(ReplyOutcome("answered", check.reply, at=now))
         # The answering agent is not told what was trimmed.
         return result("Reply received.", {"accepted": True})
 

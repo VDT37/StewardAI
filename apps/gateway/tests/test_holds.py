@@ -321,3 +321,26 @@ def test_an_old_hold_expires_into_its_own_session(tmp_path: Path) -> None:
     first, _, sessions = asyncio.run(scenario())
     # Replay of the later session never meets a hold it did not create.
     assert sessions == [first]
+
+
+def test_an_answer_from_the_other_agent_counts_as_private_data(tmp_path: Path) -> None:
+    """No own reads at all: one answered ask plus the untrusted page is enough for the
+    trifecta rule to hold the booking."""
+
+    async def scenario() -> tuple[Any, dict[str, Any]]:
+        clock = story_clock()
+        async with running(tmp_path, chatty_personal, clock=clock) as (_, ctx, _):
+            asked = await call(
+                ctx,
+                "work",
+                "ask",
+                {"contact": "personal", "request_type": "travel_limits", "fields": {}},
+            )
+            assert asked.structured_content["status"] == "answered"
+            await call(ctx, "work", "web_extract", {"url": PAGE})
+            held = await call(ctx, "work", "travel_book_train", {"option_id": "train-0930"})
+            return held, ctx.flags.peek("work", clock.now()).as_dict()
+
+    held, flags = asyncio.run(scenario())
+    assert held.structured_content["rule"] == "trifecta"
+    assert flags["private_read"] == ["a2a:travel_limits"]

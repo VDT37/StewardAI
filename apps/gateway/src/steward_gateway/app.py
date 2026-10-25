@@ -110,6 +110,7 @@ def create_app(
         holds,
         steward_clock,
         window=demo_window(anchor),
+        flags=flags,
     )
     backend = make_backend(cfg.tavily_api_key, cfg.web_backend, cfg.demo_page_url)
     if upstream_servers is None:
