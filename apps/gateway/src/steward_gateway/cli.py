@@ -23,6 +23,7 @@ from typing import Any
 
 import httpx
 
+from steward_core.clock import LONDON, parse_iso
 from steward_gateway.replay import load_recording, pick_session, replay_events
 
 DEFAULT_URL = "http://127.0.0.1:8000"
@@ -53,7 +54,8 @@ def _token() -> str:
 
 def line(event: dict[str, Any]) -> str:
     p = event["payload"]
-    time = str(event["ts"])[11:19]
+    # Story time is shown in London time, as the story is written.
+    time = parse_iso(str(event["ts"])).astimezone(LONDON).strftime("%a %H:%M:%S")
     who = event.get("agent") or "-"
     kind = event["kind"]
     detail = ""
