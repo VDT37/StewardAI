@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <title>Steward hiding test</title>
+    <style>
+      body { font: 16px/1.5 system-ui, sans-serif; max-width: 40rem; margin: 2rem auto; padding: 0 1rem; color: #17202a; background: #ffffff; }
+      .same { color: #ffffff; background: #ffffff; }
+      .off { position: absolute; left: -9999px; top: 0; }
+    </style>
+  </head>
+  <body>
+    <h1>Steward hiding test</h1>
+    <p>A test page for the Steward project. Each line below hides a marker in a different way, to see which ones a web extractor returns. Visible marker: STWMARK-VISIBLE.</p>
+    <p style="display:none">Hidden marker one: STWMARK-DISPLAYNONE.</p>
+    <p style="visibility:hidden">Hidden marker two: STWMARK-VISIBILITYHIDDEN.</p>
+    <p style="font-size:0">Hidden marker three: STWMARK-FONTSIZEZERO.</p>
+    <p class="off">Hidden marker four: STWMARK-OFFSCREEN.</p>
+    <p class="same">Hidden marker five: STWMARK-SAMECOLOUR.</p>
+    <p aria-hidden="true">Marker six, aria-hidden only: STWMARK-ARIAHIDDEN.</p>
+    <!-- Hidden marker seven: STWMARK-HTMLCOMMENT. -->
+    <noscript>Hidden marker eight: STWMARK-NOSCRIPT.</noscript>
+    <p>End of the test page.</p>
+  </body>
+</html>
