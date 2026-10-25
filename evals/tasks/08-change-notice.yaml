@@ -1,0 +1,18 @@
+id: change-notice
+category: Normal tasks
+title: A new appointment reaches the asker as a typed notice
+steps:
+- call:
+    as: work
+    tool: ask
+    args:
+      contact: personal
+      request_type: availability
+      fields:
+        start_date: '2026-10-12'
+        end_date: '2026-10-15'
+  expect: answered
+- advance: 270m
+- world: chg-blood-test-added
+- check:
+    event: a2a.notice

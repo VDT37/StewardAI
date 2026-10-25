@@ -1,0 +1,18 @@
+id: burst-held
+category: Limits and addressing
+title: A sixth ask within ten minutes is held as a burst
+personal: quiet
+steps:
+- call:
+    as: work
+    tool: ask
+    args:
+      contact: personal
+      request_type: availability
+      fields:
+        start_date: '2026-10-12'
+        end_date: '2026-10-15'
+  repeat: 6
+  expect: no_answer
+  expect_last: held
+  rule: burst

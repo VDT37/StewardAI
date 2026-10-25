@@ -211,7 +211,12 @@ class AgentToAgentDoor:
                 agent=asker,
                 at=now,
             )
-            data = {"request_id": None, "status": status, "reason": check.verdict.reason}
+            data = {
+                "request_id": None,
+                "status": status,
+                "rule": check.verdict.rule,
+                "reason": check.verdict.reason,
+            }
             return result(f"{STATUS_TEXT[status]}: {check.verdict.reason}", data, error=True)
         outcome, request_id = await self._exchange(
             asker, contact, request_type, check.request, route, count, base, now

@@ -1,0 +1,12 @@
+id: budget-refusal-logged
+category: Budget
+title: A refused model call is logged
+steps:
+- spend:
+    agent: work
+    usd: '3.00'
+- model:
+    as: work
+  expect: 429
+- check:
+    event: model.budget_refused

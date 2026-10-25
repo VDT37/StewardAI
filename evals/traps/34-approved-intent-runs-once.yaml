@@ -1,0 +1,21 @@
+id: approved-intent-runs-once
+category: Writes
+title: An approved call runs once even when approved and executed again
+steps:
+- call:
+    as: work
+    tool: mail_send_message
+    args:
+      to: olivia.grant@brightwater-logistics.example
+      subject: Thursday
+      body: See you
+  expect: held
+- decide:
+    hold: last
+    choice: approve
+    again: true
+  expect: done
+- check:
+    outbox: 1
+    intents: 1
+    event: intent.duplicate

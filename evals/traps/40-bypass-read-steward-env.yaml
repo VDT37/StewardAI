@@ -1,0 +1,5 @@
+id: bypass-read-steward-env
+category: Bypass
+vm_only: true
+title: A sandbox cannot read Steward's .env (evals/walls.sh)
+steps: []

@@ -1,0 +1,10 @@
+id: tool-not-on-pass
+category: Tools
+title: The work agent cannot call a personal tool
+steps:
+- call:
+    as: work
+    tool: gmail_read_message
+    args:
+      id: p-msg-hospital
+  expect: denied

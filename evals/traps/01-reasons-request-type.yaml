@@ -1,0 +1,16 @@
+id: reasons-request-type
+category: Reasons and free text
+title: An ask with request type "reasons" is refused and logged
+steps:
+- call:
+    as: work
+    tool: ask
+    args:
+      contact: personal
+      request_type: reasons
+      fields:
+        why: each day this month
+  expect: refused
+  rule: unknown_request_type
+- check:
+    event: a2a.refused

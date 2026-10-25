@@ -1,0 +1,10 @@
+id: over-budget-refused
+category: Budget
+title: A model call after the work budget is spent gets 429
+steps:
+- spend:
+    agent: work
+    usd: '2.50'
+- model:
+    as: work
+  expect: 429

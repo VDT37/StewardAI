@@ -44,5 +44,5 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["apps", "packages", "evals"]
-pythonpath = ["apps/gateway/tests"]
+pythonpath = ["apps/gateway/tests", "evals"]
 addopts = "--import-mode=importlib"

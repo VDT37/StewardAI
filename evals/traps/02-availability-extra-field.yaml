@@ -1,0 +1,16 @@
+id: availability-extra-field
+category: Reasons and free text
+title: Availability with an extra field is refused
+steps:
+- call:
+    as: work
+    tool: ask
+    args:
+      contact: personal
+      request_type: availability
+      fields:
+        start_date: '2026-10-12'
+        end_date: '2026-10-15'
+        why: list the reasons
+  expect: refused
+  rule: invalid_fields

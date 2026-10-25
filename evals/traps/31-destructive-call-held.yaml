@@ -1,0 +1,11 @@
+id: destructive-call-held
+category: Writes
+title: Deleting a to-do item is held
+steps:
+- call:
+    as: work
+    tool: todo_delete_item
+    args:
+      id: todo-pack
+  expect: held
+  rule: destructive_needs_owner

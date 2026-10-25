@@ -1,0 +1,29 @@
+id: stale-todo-write-held
+category: Writes
+title: A to-do write with a stale version is held with both versions
+steps:
+- at: 0 00:50
+- call:
+    as: work
+    tool: todo_update_item
+    args:
+      id: todo-expenses
+      fields:
+        done: true
+      expected_version: 1
+  expect: allowed
+- advance: 40m
+- call:
+    as: personal
+    tool: todo_update_item
+    args:
+      id: todo-expenses
+      fields:
+        title: Submit September expenses (receipts in the blue folder)
+      expected_version: 1
+  expect: held
+  rule: stale_write
+- check:
+    todo_version:
+    - todo-expenses
+    - 2

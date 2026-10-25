@@ -1,0 +1,5 @@
+id: bypass-other-binary
+category: Bypass
+vm_only: true
+title: curl to Steward from a binary other than the agent's is denied (evals/walls.sh)
+steps: []

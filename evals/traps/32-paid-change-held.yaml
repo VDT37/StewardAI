@@ -1,0 +1,17 @@
+id: paid-change-held
+category: Writes
+title: Changing a paid booking is held
+steps:
+- setup: train_booked
+- call:
+    as: work
+    tool: travel_change_booking
+    args:
+      booking_id: bk-1
+      option_id: train-1130
+  expect: held
+  rule: paid_change_needs_owner
+- check:
+    booking:
+    - depart
+    - 09:30

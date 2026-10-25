@@ -1,0 +1,10 @@
+id: budgets-independent
+category: Budget
+title: The work budget running out does not stop the personal agent
+steps:
+- spend:
+    agent: work
+    usd: '2.50'
+- model:
+    as: personal
+  expect: 200

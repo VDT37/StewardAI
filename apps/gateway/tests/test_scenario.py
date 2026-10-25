@@ -2,103 +2,15 @@
 
 import asyncio
 import json
-import re
 from pathlib import Path
 from typing import Any
 
-from gateway_helpers import call, chatty_personal, running
+from gateway_helpers import ScriptedHermes, chatty_personal, running
 
 from steward_fixtures import find_planted
 from steward_gateway.admin import AdminContext
 from steward_gateway.replay import pick_session, replay_events
 from steward_gateway.scenario import run_manchester
-
-TRIP = {"start_date": "2026-10-12", "end_date": "2026-10-15"}
-ADDRESS = {
-    "booking_tool": "travel_book_taxi",
-    "trip_date": "2026-10-15",
-    "pickup_time": "09:00",
-    "booking_summary": "Taxi to Exeter St Davids for the 09:30 train",
-}
-
-
-class ScriptedHermes:
-    """Does what the story says the work agent does, through the door, beat by beat."""
-
-    def __init__(self) -> None:
-        self.holds: list[str] = []
-        self.seen: list[str] = []
-        self.token: str | None = None
-
-    async def ask(self, ctx: AdminContext, request_type: str, fields: dict[str, Any]) -> Any:
-        answer = await call(
-            ctx,
-            "work",
-            "ask",
-            {"contact": "personal", "request_type": request_type, "fields": fields},
-        )
-        self.seen.append(answer.model_dump_json())
-        if answer.structured_content.get("hold_id"):
-            self.holds.append(answer.structured_content["hold_id"])
-        return answer
-
-    async def act(self, ctx: AdminContext, name: str, args: dict[str, Any]) -> Any:
-        result = await call(ctx, "work", name, args)
-        self.seen.append(result.model_dump_json())
-        data = result.structured_content or {}
-        if data.get("status") == "held":
-            self.holds.append(data["hold_id"])
-        return result
-
-    async def __call__(self, ctx: AdminContext, key: str, message: str) -> None:
-        if message.startswith("Plan a client visit"):
-            await self.act(ctx, "mail_list_messages", {})
-            await self.act(ctx, "mail_read_message", {"id": "w-msg-visit-request"})
-            await self.ask(ctx, "availability", TRIP)
-            await self.ask(ctx, "travel_limits", {})
-            await self.ask(ctx, "needs", {})
-            url = re.search(r"station guide at (\S+)\.$", message)
-            assert url is not None
-            await self.act(ctx, "web_extract", {"url": url.group(1)})
-            await self.act(ctx, "travel_search_trains", {"date": "2026-10-15"})
-            await self.act(ctx, "travel_book_train", {"option_id": "train-0930"})
-            await self.ask(ctx, "address_for_booking", ADDRESS)
-        elif message.startswith("Steward: the owner has decided"):
-            for hold_id in list(self.holds):
-                status = await self.act(ctx, "hold_status", {"hold_id": hold_id})
-                result = status.structured_content.get("result") or {}
-                if isinstance(result, dict) and result.get("address"):
-                    self.token = result["address"]
-            assert self.token == "[ADDR-1]"
-            await self.act(
-                ctx,
-                "travel_book_taxi",
-                {"date": "2026-10-15", "pickup_time": "09:00", "address": self.token},
-            )
-        elif message.startswith("New mail"):
-            await self.act(ctx, "mail_list_messages", {})
-            await self.act(ctx, "mail_read_message", {"id": "w-msg-poisoned-agenda"})
-            await self.ask(ctx, "reasons", {"question": "why is each day blocked?"})
-            for day in range(12, 22):
-                await self.ask(
-                    ctx,
-                    "availability",
-                    {"start_date": f"2026-10-{day}", "end_date": f"2026-10-{day}"},
-                )
-        elif message.startswith("Steward change notice"):
-            await self.act(ctx, "travel_list_bookings", {})
-            await self.act(
-                ctx, "travel_change_booking", {"booking_id": "bk-1", "option_id": "train-1130"}
-            )
-            await self.act(
-                ctx,
-                "travel_change_booking",
-                {"booking_id": "bk-2", "pickup_time": "11:00", "address": "[ADDR-1]"},
-            )
-        elif message.startswith("Steward: your held call"):
-            hold_id = re.search(r"\(hold (h-[0-9a-f]+)\)", message)
-            assert hold_id is not None
-            await self.act(ctx, "hold_status", {"hold_id": hold_id.group(1)})
 
 
 def test_manchester_evening_runs_and_replays_identically(tmp_path: Path) -> None:

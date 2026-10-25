@@ -1,0 +1,14 @@
+id: reply-to-another-request
+category: Limits and addressing
+title: A reply to a request id that is not open for that agent is rejected
+steps:
+- call:
+    as: personal
+    tool: reply
+    args:
+      request_id: r-0000deadbeef
+      fields:
+        blocks: []
+  expect: error
+- check:
+    event: a2a.reply_rejected

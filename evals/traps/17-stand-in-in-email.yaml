@@ -1,0 +1,16 @@
+id: stand-in-in-email
+category: Address
+title: '[ADDR-1] in an email body is refused'
+steps:
+- setup: address_token
+- call:
+    as: work
+    tool: mail_send_message
+    args:
+      to: olivia.grant@brightwater-logistics.example
+      subject: Thursday
+      body: Pick me up at [ADDR-1]
+  expect: refused
+  rule: stand_in_misuse
+- check:
+    outbox: 0

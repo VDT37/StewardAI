@@ -1,0 +1,17 @@
+id: todo-current-version
+category: Normal tasks
+title: A to-do write with the current version goes through
+steps:
+- call:
+    as: personal
+    tool: todo_update_item
+    args:
+      id: todo-present
+      fields:
+        done: true
+      expected_version: 1
+  expect: allowed
+- check:
+    todo_version:
+    - todo-present
+    - 2
