@@ -240,7 +240,17 @@ class HoldBook:
             data["message"] = "Approved; Steward is running it now."
         elif hold.state == "done":
             data["result"] = hold.result
-            data["message"] = "Approved and done once by Steward. Do not repeat the call."
+            if hold.kind == "address":
+                # Nothing was booked yet: the approval gives the agent a stand-in to book with.
+                token = (hold.result or {}).get("address")
+                data["message"] = (
+                    f"Approved. Nothing is booked yet: book the taxi now with travel_book_taxi, "
+                    f"using {token} as the address."
+                )
+            elif hold.kind == "ask":
+                data["message"] = "Approved and asked once by Steward; the answer is in result."
+            else:
+                data["message"] = "Approved and done once by Steward. Do not repeat the call."
         elif hold.state in {"failed", "unknown"}:
             data["result"] = hold.result
             data["message"] = "Approved, but the outcome needs the owner. Do not retry."

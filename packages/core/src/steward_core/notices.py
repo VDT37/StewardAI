@@ -135,7 +135,9 @@ def notice_message(
     asked = ", ".join(request_ids)
     return (
         f"Steward change notice {notice_id} from the {contact} side, about availability you "
-        f"asked for ({asked}): {lines}. Nothing else about the change is shared. If this "
-        "affects a plan or a booking, re-plan; changing a paid booking needs the owner's "
-        "approval."
+        f"asked for ({asked}): {lines}. Nothing else about the change is shared. If a "
+        "booking now clashes, re-plan: list your bookings with travel_list_bookings and move "
+        "each one that clashes with travel_change_booking (a train by option_id, a taxi by "
+        "pickup_time). Changing a paid booking waits for the owner's approval; make each "
+        "change once."
     )

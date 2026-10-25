@@ -128,6 +128,8 @@ def test_address_card_gives_a_stand_in_for_one_taxi_booking(tmp_path: Path) -> N
     held, status, booked, second, email, listing, ctx = asyncio.run(scenario())
     assert held.structured_content["rule"] == "address_needs_owner"
     assert status.structured_content["result"]["address"] == "[ADDR-1]"
+    # The agent is told nothing is booked yet (Hermes once read "done" as "booked").
+    assert "Nothing is booked yet" in status.structured_content["message"]
     assert not booked.is_error
     (booking,) = ctx.world.bookings.values()
     assert booking["from"].startswith("27 Ashdown Road")
