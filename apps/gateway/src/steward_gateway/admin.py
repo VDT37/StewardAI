@@ -107,7 +107,7 @@ def admin_router(ctx: Runtime) -> APIRouter:
         rules = policy.agents[agent]
         now = ctx.clock.now()
         day = london_day(now).isoformat()
-        flags, _ = ctx.flags.read(agent, now)
+        flags = ctx.flags.peek(agent, now)
         return {
             "id": agent,
             "model": rules.model,

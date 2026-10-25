@@ -211,6 +211,14 @@ class FlagBook:
             return self._flags[agent], True
         return flags, False
 
+    def peek(self, agent: str, now: datetime) -> AgentFlags:
+        """The flags as of now, without clearing anything (for the console). Only an agent's
+        own call clears them, so a replay without the console sees the same moments."""
+        flags = self._flags.get(agent, AgentFlags())
+        if flags.since is not None and flags.since < last_flag_reset(now) <= now:
+            return AgentFlags()
+        return flags
+
     def set(self, agent: str, flag: str, source: str, now: datetime) -> bool:
         """Mark a flag from a source; True when the flag was not set before."""
         flags, _ = self.read(agent, now)
@@ -228,4 +236,4 @@ class FlagBook:
         self._flags.clear()
 
     def snapshot(self, now: datetime) -> dict[str, dict[str, Any]]:
-        return {agent: self.read(agent, now)[0].as_dict() for agent in sorted(self._flags)}
+        return {agent: self.peek(agent, now).as_dict() for agent in sorted(self._flags)}

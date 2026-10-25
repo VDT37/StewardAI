@@ -282,6 +282,10 @@ async def replay_events(
                 gate.release("delivery", str(payload.get(DELIVERIES[kind])), payload)
             elif kind == "a2a.timeout":
                 runtime.a2a.force_timeout(str(payload["request_id"]))
+            elif kind == "hold.expired":
+                # Expiry is noticed whenever a hold is read (an agent, the console, the runner).
+                # Reading it at the recorded moment notices it the same way.
+                runtime.holds.get(str(payload["hold_id"]))
             elif kind in {"model.call", "model.budget_refused"} and agent:
                 runtime.model_door.replay_call(str(agent), payload)
             else:

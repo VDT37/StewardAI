@@ -1,12 +1,13 @@
 """The whole Manchester evening with scripted agents, then its replay."""
 
 import asyncio
+import datetime as dt
 import json
 from pathlib import Path
 from typing import Any
 
 import pytest
-from gateway_helpers import ScriptedHermes, chatty_personal, running
+from gateway_helpers import ScriptedHermes, call, chatty_personal, running, story_clock
 
 from steward_fixtures import find_planted
 from steward_gateway.admin import AdminContext
@@ -108,6 +109,27 @@ def test_replay_matches_even_when_upstream_calls_are_slow(
                 await asyncio.sleep(0.01)
             lines = [json.loads(line) for line in ctx.store.export_lines()]
             return await replay_events(pick_session(lines, None))
+
+    result = asyncio.run(scenario())
+    assert result["ok"], result["first_difference"]
+
+
+def test_a_hold_that_expires_while_the_owner_looks_replays(tmp_path: Path) -> None:
+    """Expiry noticed by a read that is not an agent's call (the console, the runner) is in the
+    log; replay notices it at the same moment."""
+
+    async def scenario() -> dict[str, Any]:
+        clock = story_clock()
+        async with running(tmp_path, clock=clock) as (_, ctx, _):
+            ctx.recorder.new_session("expiry", scoped=True)
+            await call(ctx, "work", "todo_delete_item", {"id": "todo-pack"})
+            clock.set(clock.now() + dt.timedelta(hours=13), rate=0)
+            assert ctx.holds.pending() == []
+            assert ctx.flags.peek("work", clock.now()).as_dict()["private_read"] == []
+            lines = [json.loads(line) for line in ctx.store.export_lines()]
+            events = [e for e in lines if e["session_id"] == ctx.recorder.session_id]
+            assert [e["kind"] for e in events][-1] == "hold.expired"
+            return await replay_events(events)
 
     result = asyncio.run(scenario())
     assert result["ok"], result["first_difference"]
