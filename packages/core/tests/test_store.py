@@ -135,3 +135,46 @@ def test_fingerprint_changes_with_description() -> None:
     schema = {"type": "object", "properties": {}}
     assert tool_fingerprint("t", "a", schema) == tool_fingerprint("t", "a", dict(schema))
     assert tool_fingerprint("t", "a", schema) != tool_fingerprint("t", "b", schema)
+
+
+def test_holds_move_once_and_intents_claim_a_key(tmp_path: Path) -> None:
+    from steward_core.store import Hold
+
+    store = Store(tmp_path / "s.db")
+    hold = Hold(
+        hold_id="h-1",
+        session_id="s-1",
+        agent="work",
+        kind="tool",
+        tool="travel_book_train",
+        tool_id="travel.book_train",
+        args={"option_id": "train-0930"},
+        fingerprint="f" * 64,
+        rule="trifecta",
+        rules=["trifecta"],
+        reason="held",
+        details={},
+        choices=[{"id": "approve", "label": "Allow once"}],
+        state="pending",
+        created="2026-10-11T18:05:00.000Z",
+        expires="2026-10-12T06:05:00.000Z",
+    )
+    store.insert_hold(hold)
+    assert store.move_hold("h-1", from_state="pending", to_state="approved", choice="approve")
+    assert not store.move_hold("h-1", from_state="pending", to_state="denied")
+    assert store.hold("h-1").state == "approved"  # type: ignore[union-attr]
+    assert [h.hold_id for h in store.holds(state="approved")] == ["h-1"]
+    assert store.start_intent("k", "h-1", "travel.book_train", "2026-10-11T18:06:00.000Z")
+    assert not store.start_intent("k", "h-1", "travel.book_train", "2026-10-11T18:07:00.000Z")
+    store.finish_intent("k", "done", {"booking": "bk-1"}, "2026-10-11T18:06:01.000Z")
+    assert store.intent("k")["state"] == "done"  # type: ignore[index]
+    store.save_stand_in("s-1", "[ADDR-1]", {"token": "[ADDR-1]", "covers": 1})
+    assert store.stand_in("s-1", "[ADDR-1]") == {"token": "[ADDR-1]", "covers": 1}
+    assert store.stand_in("s-2", "[ADDR-1]") is None
+
+
+def test_ask_counts_are_scoped(tmp_path: Path) -> None:
+    store = Store(tmp_path / "s.db")
+    store.bump_ask_count("2026-10-11", "work", "personal", "live")
+    assert store.bump_ask_count("2026-10-11", "work", "personal", "s-run") == 1
+    assert store.ask_counts("2026-10-11", "work", "live") == {"personal": 1}

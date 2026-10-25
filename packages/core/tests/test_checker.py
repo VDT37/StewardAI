@@ -48,7 +48,6 @@ def test_valid_ask_is_allowed() -> None:
     [
         (Ask("personal", "reasons", {"why": "each day"}), None, "unknown_request_type"),
         (Ask("bank", "availability", FIELDS), ctx(route=None), "no_route"),
-        (Ask("personal", "availability", FIELDS), ctx(asks_today=11), "daily_limit"),
         (Ask("personal", "availability", {**FIELDS, "why": "x"}), None, "invalid_fields"),
         (Ask("personal", "availability", "12 to 15 Oct"), None, "invalid_fields"),
         (
@@ -63,9 +62,18 @@ def test_refusals(ask: Ask, context: CheckContext | None, rule: str) -> None:
     assert result.verdict.decision is Decision.REFUSE and result.verdict.rule == rule
 
 
-def test_tenth_ask_passes_and_eleventh_is_refused() -> None:
+def test_tenth_ask_passes_and_eleventh_is_held() -> None:
     assert check(Ask("personal", "availability", FIELDS), ctx(10)).verdict.allowed
-    assert check(Ask("personal", "availability", FIELDS), ctx(11)).verdict.rule == "daily_limit"
+    eleventh = check(Ask("personal", "availability", FIELDS), ctx(11))
+    assert eleventh.verdict.decision is Decision.HOLD and eleventh.verdict.rule == "daily_limit"
+    # A held ask keeps its validated request, so an approval can still run it.
+    assert isinstance(eleventh.request, AvailabilityRequest)
+
+
+def test_a_burst_is_held() -> None:
+    burst = CheckContext("work", "personal", ROUTE, 3, WINDOW, asks_in_burst=6)
+    result = check(Ask("personal", "availability", FIELDS), burst)
+    assert result.verdict.decision is Decision.HOLD and result.verdict.rule == "burst"
 
 
 def test_reply_is_trimmed() -> None:
@@ -157,14 +165,24 @@ def test_policy_file_loads() -> None:
     policy = load_policy(ROOT / "config" / "steward.yaml")
     assert set(policy.agents) == {"work", "personal"}
     route = policy.route("work", "personal")
-    assert route is not None and route.request_types == ("availability",)
+    assert route is not None and route.request_types == (
+        "availability",
+        "travel_limits",
+        "needs",
+        "address_for_booking",
+    )
     assert policy.route("personal", "work") is None
     assert [exposed_name(t) for t in policy.agents["personal"].tools] == [
         "calendar_list_events",
         "gmail_list_messages",
         "gmail_read_message",
+        "profile_read_needs",
         "todo_list_items",
+        "todo_update_item",
     ]
+    assert policy.tool_rule("web.extract").is_egress
+    assert policy.tool_rule("travel.book_train").is_egress
+    assert not policy.tool_rule("shared_todo.update_item").is_egress
 
 
 def test_policy_rejects_clashes_and_unknown_agents() -> None:
@@ -184,6 +202,10 @@ def test_policy_rejects_clashes_and_unknown_agents() -> None:
     base["agents"]["work"]["tools"] = []
     base["contacts"] = [{"from": "work", "to": "ghost", "request_types": ["availability"]}]
     with pytest.raises(ValidationError, match="unknown agents"):
+        load_policy_dict(base)
+    base["contacts"] = []
+    base["agents"]["work"]["tools"] = ["work_mail.send_message"]
+    with pytest.raises(ValidationError, match="need a class"):
         load_policy_dict(base)
 
 

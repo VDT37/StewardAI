@@ -5,8 +5,13 @@ the hash of the previous row and its own hash over the canonical JSON of
 {seq, ts, session_id, agent, door, kind, payload, prev_hash}. The payload column stores
 jcs(payload), so parsing it back gives the object that was hashed.
 
-tool_pins holds the fingerprint first seen for each upstream tool. ask_counts holds the number
-of agent-to-agent asks per (Europe/London day, asker, contact).
+tool_pins holds the fingerprint first seen for each upstream tool. ask_counts_scoped holds the
+number of agent-to-agent asks per (scope, Europe/London day, asker, contact); the scope is "live",
+or the session id of a scenario run, so repeated runs of the story day start from zero.
+
+Phase 2 adds holds (calls waiting for the owner, locked to a fingerprint), intents (execute
+once: a unique idempotency key per approved call) and stand_ins (address stand-ins and what
+they are bound to).
 
 One connection, one writer lock: appends read the last hash and insert inside one
 BEGIN IMMEDIATE transaction, so the chain cannot fork. The SQL avoids SQLite-only types so the
@@ -56,12 +61,50 @@ CREATE TABLE IF NOT EXISTS tool_pins (
     fingerprint TEXT NOT NULL,
     pinned_at TEXT NOT NULL
 );
-CREATE TABLE IF NOT EXISTS ask_counts (
+CREATE TABLE IF NOT EXISTS ask_counts_scoped (
+    scope TEXT NOT NULL,
     day TEXT NOT NULL,
     asker TEXT NOT NULL,
     contact TEXT NOT NULL,
     count INTEGER NOT NULL,
-    PRIMARY KEY (day, asker, contact)
+    PRIMARY KEY (scope, day, asker, contact)
+);
+CREATE TABLE IF NOT EXISTS holds (
+    hold_id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    agent TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    tool TEXT NOT NULL,
+    tool_id TEXT,
+    args TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    rule TEXT NOT NULL,
+    rules TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    details TEXT NOT NULL,
+    choices TEXT NOT NULL,
+    state TEXT NOT NULL,
+    choice TEXT,
+    result TEXT,
+    created TEXT NOT NULL,
+    expires TEXT NOT NULL,
+    decided TEXT
+);
+CREATE INDEX IF NOT EXISTS holds_by_state ON holds (state, created);
+CREATE TABLE IF NOT EXISTS intents (
+    intent_key TEXT PRIMARY KEY,
+    hold_id TEXT NOT NULL,
+    tool_id TEXT NOT NULL,
+    state TEXT NOT NULL,
+    result TEXT,
+    created TEXT NOT NULL,
+    updated TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS stand_ins (
+    session_id TEXT NOT NULL,
+    token TEXT NOT NULL,
+    data TEXT NOT NULL,
+    PRIMARY KEY (session_id, token)
 );
 """
 
@@ -95,6 +138,60 @@ class Event:
 
     def as_dict(self) -> dict[str, Any]:
         return {**self.hashed_row(), "hash": self.hash}
+
+
+@dataclass
+class Hold:
+    hold_id: str
+    session_id: str
+    agent: str
+    # tool (a held tool call), ask (an ask over a limit) or address (an address request).
+    kind: str
+    # The exposed tool name the agent called ("ask" for asks).
+    tool: str
+    tool_id: str | None
+    args: dict[str, Any]
+    fingerprint: str
+    rule: str
+    rules: list[str]
+    reason: str
+    details: dict[str, Any]
+    choices: list[dict[str, str]]
+    state: str
+    created: str
+    expires: str
+    choice: str | None = None
+    result: dict[str, Any] | None = None
+    decided: str | None = None
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "hold_id": self.hold_id,
+            "session_id": self.session_id,
+            "agent": self.agent,
+            "kind": self.kind,
+            "tool": self.tool,
+            "tool_id": self.tool_id,
+            "args": self.args,
+            "fingerprint": self.fingerprint,
+            "rule": self.rule,
+            "rules": self.rules,
+            "reason": self.reason,
+            "details": self.details,
+            "choices": self.choices,
+            "state": self.state,
+            "created": self.created,
+            "expires": self.expires,
+            "choice": self.choice,
+            "result": self.result,
+            "decided": self.decided,
+        }
+
+
+HOLD_COLUMNS = (
+    "hold_id, session_id, agent, kind, tool, tool_id, args, fingerprint, rule, rules, reason, "
+    "details, choices, state, choice, result, created, expires, decided"
+)
 
 
 @dataclass(frozen=True)
@@ -249,13 +346,26 @@ class Store:
         for row in rows:
             yield jcs(_event_from_row(row).as_dict()).decode("utf-8")
 
-    def spend_since(self, agent: str, since_ts: str) -> Decimal:
-        """Sum of cost_usd over the agent's model calls at or after since_ts."""
+    def spend_since(
+        self,
+        agent: str,
+        since_ts: str,
+        *,
+        until_ts: str | None = None,
+        session_id: str | None = None,
+    ) -> Decimal:
+        """Sum of cost_usd over the agent's model calls in [since_ts, until_ts), optionally
+        within one session (a scenario run counts only its own spend)."""
+        query = "SELECT payload FROM events WHERE agent = ? AND kind = 'model.call' AND ts >= ?"
+        params: list[Any] = [agent, since_ts]
+        if until_ts is not None:
+            query += " AND ts < ?"
+            params.append(until_ts)
+        if session_id is not None:
+            query += " AND session_id = ?"
+            params.append(session_id)
         with self._lock:
-            rows = self._conn.execute(
-                "SELECT payload FROM events WHERE agent = ? AND kind = 'model.call' AND ts >= ?",
-                (agent, since_ts),
-            ).fetchall()
+            rows = self._conn.execute(query, params).fetchall()
         total = Decimal(0)
         for (text,) in rows:
             cost = json.loads(text).get("cost_usd")
@@ -286,19 +396,21 @@ class Store:
 
     # Ask counts -------------------------------------------------------------------------------
 
-    def bump_ask_count(self, day: str, asker: str, contact: str) -> int:
+    def bump_ask_count(self, day: str, asker: str, contact: str, scope: str = "live") -> int:
         """Count one more ask on this day and return the new count."""
         with self._lock:
             self._conn.execute("BEGIN IMMEDIATE")
             try:
                 self._conn.execute(
-                    "INSERT INTO ask_counts (day, asker, contact, count) VALUES (?, ?, ?, 1) "
-                    "ON CONFLICT (day, asker, contact) DO UPDATE SET count = ask_counts.count + 1",
-                    (day, asker, contact),
+                    "INSERT INTO ask_counts_scoped (scope, day, asker, contact, count) "
+                    "VALUES (?, ?, ?, ?, 1) ON CONFLICT (scope, day, asker, contact) "
+                    "DO UPDATE SET count = ask_counts_scoped.count + 1",
+                    (scope, day, asker, contact),
                 )
                 row = self._conn.execute(
-                    "SELECT count FROM ask_counts WHERE day = ? AND asker = ? AND contact = ?",
-                    (day, asker, contact),
+                    "SELECT count FROM ask_counts_scoped "
+                    "WHERE scope = ? AND day = ? AND asker = ? AND contact = ?",
+                    (scope, day, asker, contact),
                 ).fetchone()
                 self._conn.execute("COMMIT")
             except BaseException:
@@ -306,12 +418,206 @@ class Store:
                 raise
         return int(row[0])
 
-    def ask_counts(self, day: str, asker: str) -> dict[str, int]:
+    def ask_counts(self, day: str, asker: str, scope: str = "live") -> dict[str, int]:
         with self._lock:
             rows = self._conn.execute(
-                "SELECT contact, count FROM ask_counts WHERE day = ? AND asker = ?", (day, asker)
+                "SELECT contact, count FROM ask_counts_scoped "
+                "WHERE scope = ? AND day = ? AND asker = ?",
+                (scope, day, asker),
             ).fetchall()
         return {str(contact): int(count) for contact, count in rows}
+
+    # Holds ------------------------------------------------------------------------------------
+
+    def insert_hold(self, hold: Hold) -> None:
+        row = _hold_row(hold)
+        marks = ", ".join("?" for _ in row)
+        with self._lock:
+            self._conn.execute(f"INSERT INTO holds ({HOLD_COLUMNS}) VALUES ({marks})", row)
+
+    def hold(self, hold_id: str) -> Hold | None:
+        with self._lock:
+            row = self._conn.execute(
+                f"SELECT {HOLD_COLUMNS} FROM holds WHERE hold_id = ?", (hold_id,)
+            ).fetchone()
+        return None if row is None else _hold_from_row(row)
+
+    def holds(
+        self, *, state: str | None = None, session_id: str | None = None, limit: int = 200
+    ) -> list[Hold]:
+        clauses: list[str] = []
+        params: list[Any] = []
+        for column, value in (("state", state), ("session_id", session_id)):
+            if value is not None:
+                clauses.append(f"{column} = ?")
+                params.append(value)
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.append(max(1, min(limit, 1000)))
+        with self._lock:
+            rows = self._conn.execute(
+                f"SELECT {HOLD_COLUMNS} FROM holds {where} ORDER BY created DESC, hold_id LIMIT ?",
+                params,
+            ).fetchall()
+        return [_hold_from_row(row) for row in rows]
+
+    def move_hold(
+        self,
+        hold_id: str,
+        *,
+        from_state: str,
+        to_state: str,
+        choice: str | None = None,
+        result: dict[str, Any] | None = None,
+        decided: str | None = None,
+    ) -> bool:
+        """Compare and set: change the state only if it is still from_state, so two decisions
+        on the same hold cannot both win."""
+        sets = ["state = ?"]
+        params: list[Any] = [to_state]
+        for column, value in (("choice", choice), ("decided", decided)):
+            if value is not None:
+                sets.append(f"{column} = ?")
+                params.append(value)
+        if result is not None:
+            sets.append("result = ?")
+            params.append(jcs(result).decode("utf-8"))
+        params += [hold_id, from_state]
+        with self._lock:
+            cursor = self._conn.execute(
+                f"UPDATE holds SET {', '.join(sets)} WHERE hold_id = ? AND state = ?", params
+            )
+        return cursor.rowcount == 1
+
+    # Intents (execute once) -------------------------------------------------------------------
+
+    def start_intent(self, intent_key: str, hold_id: str, tool_id: str, now: str) -> bool:
+        """Claim the idempotency key. False means the call already ran or is running."""
+        with self._lock:
+            cursor = self._conn.execute(
+                "INSERT INTO intents (intent_key, hold_id, tool_id, state, result, created, "
+                "updated) VALUES (?, ?, ?, 'executing', NULL, ?, ?) "
+                "ON CONFLICT (intent_key) DO NOTHING",
+                (intent_key, hold_id, tool_id, now, now),
+            )
+        return cursor.rowcount == 1
+
+    def finish_intent(
+        self, intent_key: str, state: str, result: dict[str, Any] | None, now: str
+    ) -> None:
+        with self._lock:
+            self._conn.execute(
+                "UPDATE intents SET state = ?, result = ?, updated = ? WHERE intent_key = ?",
+                (state, None if result is None else jcs(result).decode("utf-8"), now, intent_key),
+            )
+
+    def intent(self, intent_key: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT intent_key, hold_id, tool_id, state, result, created, updated "
+                "FROM intents WHERE intent_key = ?",
+                (intent_key,),
+            ).fetchone()
+        return None if row is None else _intent_from_row(row)
+
+    def intents(self, limit: int = 200) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT intent_key, hold_id, tool_id, state, result, created, updated "
+                "FROM intents ORDER BY created DESC LIMIT ?",
+                (max(1, min(limit, 1000)),),
+            ).fetchall()
+        return [_intent_from_row(row) for row in rows]
+
+    # Stand-ins --------------------------------------------------------------------------------
+
+    def save_stand_in(self, session_id: str, token: str, data: dict[str, Any]) -> None:
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO stand_ins (session_id, token, data) VALUES (?, ?, ?) "
+                "ON CONFLICT (session_id, token) DO UPDATE SET data = excluded.data",
+                (session_id, token, jcs(data).decode("utf-8")),
+            )
+
+    def stand_in(self, session_id: str, token: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT data FROM stand_ins WHERE session_id = ? AND token = ?",
+                (session_id, token),
+            ).fetchone()
+        if row is None:
+            return None
+        data: dict[str, Any] = json.loads(row[0])
+        return data
+
+    def stand_ins(self, session_id: str) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT data FROM stand_ins WHERE session_id = ? ORDER BY token", (session_id,)
+            ).fetchall()
+        return [json.loads(row[0]) for row in rows]
+
+
+def _hold_row(hold: Hold) -> tuple[Any, ...]:
+    def text(value: Any) -> str:
+        return jcs(value).decode("utf-8")
+
+    return (
+        hold.hold_id,
+        hold.session_id,
+        hold.agent,
+        hold.kind,
+        hold.tool,
+        hold.tool_id,
+        text(hold.args),
+        hold.fingerprint,
+        hold.rule,
+        text(hold.rules),
+        hold.reason,
+        text(hold.details),
+        text(hold.choices),
+        hold.state,
+        hold.choice,
+        None if hold.result is None else text(hold.result),
+        hold.created,
+        hold.expires,
+        hold.decided,
+    )
+
+
+def _hold_from_row(row: tuple[Any, ...]) -> Hold:
+    return Hold(
+        hold_id=str(row[0]),
+        session_id=str(row[1]),
+        agent=str(row[2]),
+        kind=str(row[3]),
+        tool=str(row[4]),
+        tool_id=None if row[5] is None else str(row[5]),
+        args=json.loads(row[6]),
+        fingerprint=str(row[7]),
+        rule=str(row[8]),
+        rules=json.loads(row[9]),
+        reason=str(row[10]),
+        details=json.loads(row[11]),
+        choices=json.loads(row[12]),
+        state=str(row[13]),
+        choice=None if row[14] is None else str(row[14]),
+        result=None if row[15] is None else json.loads(row[15]),
+        created=str(row[16]),
+        expires=str(row[17]),
+        decided=None if row[18] is None else str(row[18]),
+    )
+
+
+def _intent_from_row(row: tuple[Any, ...]) -> dict[str, Any]:
+    return {
+        "intent_key": str(row[0]),
+        "hold_id": str(row[1]),
+        "tool_id": str(row[2]),
+        "state": str(row[3]),
+        "result": None if row[4] is None else json.loads(row[4]),
+        "created": str(row[5]),
+        "updated": str(row[6]),
+    }
 
 
 def _event_from_row(row: tuple[Any, ...]) -> Event:
