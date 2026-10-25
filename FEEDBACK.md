@@ -6,6 +6,12 @@ Entry format: Date, Product, What happened, What I expected, Suggestion.
 
 ## Entries
 
+- Date: 2026-10-25
+- Product: Tavily Extract API
+- What happened: Extract returns text that a visitor to the page cannot see. I put one marker string in each of eight hiding methods on a test page (https://vdt37.github.io/StewardAI/demo/hiding-test.html) and called extract four times: basic and advanced depth, each as markdown and as text. Text hidden with CSS (`display:none`, `visibility:hidden`, `font-size:0`, off-screen positioning, same colour as the background) and `aria-hidden` text came back in all four combinations. HTML comments and `<noscript>` content did not come back in any of them. `include_usage` reported 0, 0, 0 and 1 credits for the four calls. This matters for Steward because a page's hidden instructions reach an agent through extract, so a gateway cannot rely on the extractor to strip them. Steward treats every extract result as untrusted.
+- What I expected: Text that is not visible on the page to be left out of the result, or marked as hidden. (draft, edit)
+- Suggestion: State in the docs which hidden-text methods extract keeps, and offer an option to return visible text only. (draft, edit)
+
 - Date: 2026-10-24
 - Product: NVIDIA OpenShell 0.1.4 (CLI)
 - What happened: Changing an imported provider profile took three tries. `openshell profile lint -f` on the edited file failed with "custom provider profile 'steward-work' already exists", so lint cannot check an edit to a profile that is already registered. `openshell profile update -f <file> steward-work` then failed with "custom provider profile update requires a non-zero resource_version; export the current profile before editing it". It worked after prepending `resource_version: <n>` from `openshell profile export steward-work` to a copy of the file. The profile in the repo stays without `resource_version`, because the number belongs to the server.
