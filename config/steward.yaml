@@ -44,7 +44,8 @@ agents:
     delivery:
       kind: openclaw-exec
       sandbox: personal-agent
-      timeout_s: 120
+      # Nano sometimes reasons for more than two minutes before it replies (live run 2).
+      timeout_s: 200
 
 contacts:
   - from: work
@@ -112,7 +113,8 @@ prices:
 checker: deterministic
 
 a2a:
-  reply_timeout_s: 150
+  # Stays under Hermes's 300 s MCP tool timeout (agents/hermes/config.yaml).
+  reply_timeout_s: 240
   reply_grace_s: 3
 
 holds:
