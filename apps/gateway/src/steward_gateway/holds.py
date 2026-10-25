@@ -138,6 +138,7 @@ class HoldBook:
                     {"hold_id": hold.hold_id, "rule": hold.rule},
                     agent=hold.agent,
                     at=now,
+                    session_id=hold.session_id,
                 )
                 hold = self.store.hold(hold.hold_id) or hold
                 self._notify(hold, "expired")

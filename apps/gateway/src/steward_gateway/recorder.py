@@ -45,10 +45,13 @@ class Recorder:
         *,
         agent: str | None = None,
         at: datetime | None = None,
+        session_id: str | None = None,
     ) -> Event:
-        """Append one event. Errors propagate: a call that cannot be logged does not go ahead."""
+        """Append one event. Errors propagate: a call that cannot be logged does not go ahead.
+        session_id files the event under another session (a hold from an earlier session
+        expiring now belongs to the session that created it)."""
         return self.store.append(
-            session_id=self.session_id,
+            session_id=session_id or self.session_id,
             agent=agent,
             door=door,
             kind=kind,

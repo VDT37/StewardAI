@@ -302,3 +302,20 @@ def test_the_console_approves_with_the_fingerprint(tmp_path: Path) -> None:
         )
         assert right.status_code == 200 and right.json()["state"] == "denied"
         assert client.get("/admin/holds", headers=owner).json() == []
+
+
+def test_an_old_hold_expires_into_its_own_session(tmp_path: Path) -> None:
+    async def scenario() -> tuple[str, str, list[str]]:
+        clock = story_clock()
+        async with running(tmp_path, clock=clock) as (_, ctx, _):
+            first = ctx.recorder.session_id
+            held = await call(ctx, "work", "todo_delete_item", {"id": "todo-pack"})
+            ctx.recorder.new_session("later run", scoped=True)
+            clock.set(clock.now() + dt.timedelta(hours=13), rate=0)
+            ctx.holds.pending()
+            expired = ctx.store.events(kind="hold.expired")
+            return first, str(held.structured_content["hold_id"]), [e.session_id for e in expired]
+
+    first, _, sessions = asyncio.run(scenario())
+    # Replay of the later session never meets a hold it did not create.
+    assert sessions == [first]
