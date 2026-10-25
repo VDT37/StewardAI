@@ -35,6 +35,7 @@ SHOWN = (
     "a2a.held",
     "a2a.notice",
     "stand_in.issued",
+    "tool.call",
     "tool.held",
     "tool.refused",
     "tool.denied",
