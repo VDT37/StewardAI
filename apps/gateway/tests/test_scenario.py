@@ -5,12 +5,14 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
 from gateway_helpers import ScriptedHermes, chatty_personal, running
 
 from steward_fixtures import find_planted
 from steward_gateway.admin import AdminContext
 from steward_gateway.replay import pick_session, replay_events
 from steward_gateway.scenario import run_manchester
+from steward_gateway.tool_door import Catalogue
 
 
 def test_manchester_evening_runs_and_replays_identically(tmp_path: Path) -> None:
@@ -79,3 +81,33 @@ def test_manchester_evening_runs_and_replays_identically(tmp_path: Path) -> None
     # And the replay makes the same decisions, byte for byte.
     assert result["ok"], result
     assert result["compared"] >= 70 and result["compared"] == result["recorded_decisions"]
+
+
+def test_replay_matches_even_when_upstream_calls_are_slow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Every upstream call takes 5 ms here, so the live clock moves on between a decision
+    and its execution. Replay must still match: decisions use the moment they were made."""
+    original = Catalogue.call
+
+    async def slow(self: Catalogue, tool_id: str, arguments: dict[str, Any]) -> Any:
+        await asyncio.sleep(0.005)
+        result = await original(self, tool_id, arguments)
+        # The gap between the upstream write and the logged result is what a slow machine
+        # widens; replay must not depend on it.
+        await asyncio.sleep(0.005)
+        return result
+
+    monkeypatch.setattr(Catalogue, "call", slow)
+    hermes = ScriptedHermes()
+
+    async def scenario() -> dict[str, Any]:
+        async with running(tmp_path, chatty_personal, work=hermes) as (_, ctx, _):
+            await run_manchester(ctx, "scripted", 0, "agent")
+            for _ in range(20):
+                await asyncio.sleep(0.01)
+            lines = [json.loads(line) for line in ctx.store.export_lines()]
+            return await replay_events(pick_session(lines, None))
+
+    result = asyncio.run(scenario())
+    assert result["ok"], result["first_difference"]

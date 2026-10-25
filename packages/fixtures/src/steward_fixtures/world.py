@@ -72,6 +72,9 @@ class World:
         self.bookings: dict[str, dict[str, Any]] = {}
         self.outbox: list[dict[str, Any]] = []
         self.applied: list[str] = []
+        # Steward pins the world's time to the moment it decided a call while that call runs,
+        # so a replay (which decides at the recorded moment) sees exactly the same time.
+        self.pinned: datetime | None = None
         self.reset(follow_clock=follow_clock)
 
     def reset(self, *, follow_clock: bool | None = None) -> None:
@@ -97,7 +100,7 @@ class World:
             listener(kind, data)
 
     def now(self) -> datetime:
-        return self.clock().astimezone(TZ)
+        return (self.pinned or self.clock()).astimezone(TZ)
 
     # Calendars and mail -----------------------------------------------------------------------
 

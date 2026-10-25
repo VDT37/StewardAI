@@ -227,9 +227,9 @@ class HoldBook:
         finished = self.store.hold(hold.hold_id) or hold
         self._notify(finished, "decided")
 
-    def status(self, hold_id: str, agent: str) -> dict[str, Any]:
+    def status(self, hold_id: str, agent: str, now: datetime | None = None) -> dict[str, Any]:
         """What the hold_status tool tells the agent that made the call."""
-        hold = self.get(hold_id)
+        hold = self.get(hold_id, now)
         if hold is None or hold.agent != agent:
             return {"hold_id": hold_id, "status": "unknown", "message": "no such hold for you"}
         data: dict[str, Any] = {"hold_id": hold_id, "status": hold.state, "tool": hold.tool}

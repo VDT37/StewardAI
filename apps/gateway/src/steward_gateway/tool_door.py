@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from datetime import datetime
@@ -42,7 +42,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from steward_core.address import COVERED_TOOL, StandIn, find_stand_ins, swap_stand_ins
 from steward_core.canonical import tool_fingerprint
 from steward_core.checker import Decision
-from steward_core.clock import Clock, iso_ms
+from steward_core.clock import Clock, iso_ms, parse_iso
 from steward_core.policy import Policy, ToolRule, exposed_name
 from steward_core.rules import CallFacts, CallVerdict, FlagBook, decide
 from steward_core.store import Hold, Store
@@ -190,6 +190,11 @@ class ToolDoor:
         self.vault = dict(vault or {})
         self.vault_readers = vault_readers
         self.gate: Gate = gate or NoGate()
+        # Pins the upstream world's time to the moment of the decision while a call runs (set
+        # by the app for the fixture world). Upstream calls run one at a time, so two calls
+        # never see each other's pin.
+        self.pin_time: Callable[[datetime | None], None] = lambda moment: None
+        self._exec_lock = asyncio.Lock()
         # Agent -> exposed tool name -> upstream tool id.
         self.exposures: dict[str, dict[str, str]] = {
             agent: {exposed_name(tool_id): tool_id for tool_id in rules.tools}
@@ -351,7 +356,7 @@ class ToolDoor:
             agent=agent,
             at=now,
         )
-        result, _ = await self._run(agent, tool_id, rule, arguments, "tool.result", call_id)
+        result, _ = await self._run(agent, tool_id, rule, arguments, "tool.result", call_id, at=now)
         return result
 
     def _denied(
@@ -367,7 +372,7 @@ class ToolDoor:
     def _hold_status(self, agent: str, arguments: dict[str, Any]) -> CallToolResult:
         now = self.clock.now()
         hold_id = str(arguments.get("hold_id", ""))
-        data = self.holds.status(hold_id, agent)
+        data = self.holds.status(hold_id, agent, now)
         self.recorder.record(
             "tool",
             "hold.status",
@@ -405,7 +410,9 @@ class ToolDoor:
         agent_rules = self.policy.agents[agent]
         if rule.quote_tool:
             quote = await self._internal(
-                rule.quote_tool, {"tool": tool_id.partition(".")[2], "arguments": arguments}
+                rule.quote_tool,
+                {"tool": tool_id.partition(".")[2], "arguments": arguments},
+                at=now,
             )
             if quote is None or "error" in quote:
                 return (
@@ -417,7 +424,7 @@ class ToolDoor:
             trip_date = str(quote["trip_date"])
             details["quote"] = {"price_gbp": quote["price_gbp"], "trip_date": trip_date}
             if rule.ledger_tool:
-                ledger = await self._internal(rule.ledger_tool, {}) or {}
+                ledger = await self._internal(rule.ledger_tool, {}, at=now) or {}
                 booking_id = arguments.get("booking_id")
                 trip_total = sum(
                     (
@@ -436,7 +443,9 @@ class ToolDoor:
         current_version: int | None = None
         if rule.versioned is not None:
             item_id = arguments.get(rule.versioned.id_arg)
-            found = await self._internal(rule.versioned.read_tool, {rule.versioned.id_arg: item_id})
+            found = await self._internal(
+                rule.versioned.read_tool, {rule.versioned.id_arg: item_id}, at=now
+            )
             item = (found or {}).get("item")
             if isinstance(item, dict) and isinstance(item.get("version"), int):
                 current_version = item["version"]
@@ -465,15 +474,27 @@ class ToolDoor:
         )
         return facts, details, None
 
-    async def _internal(self, tool_id: str, arguments: dict[str, Any]) -> dict[str, Any] | None:
+    async def _internal(
+        self, tool_id: str, arguments: dict[str, Any], at: datetime | None = None
+    ) -> dict[str, Any] | None:
         """Steward's own read of an upstream tool (quotes, ledgers, current versions)."""
         try:
-            result = await self.catalogue.call(tool_id, arguments)
+            result = await self._upstream(tool_id, arguments, at)
         except Exception as exc:
             return {"error": type(exc).__name__}
         if result.is_error:
             return {"error": _content_text(result) or "error"}
         return result.structured_content if isinstance(result.structured_content, dict) else None
+
+    async def _upstream(
+        self, tool_id: str, arguments: dict[str, Any], at: datetime | None
+    ) -> CallToolResult:
+        async with self._exec_lock:
+            self.pin_time(at)
+            try:
+                return await self.catalogue.call(tool_id, arguments)
+            finally:
+                self.pin_time(None)
 
     async def _run(
         self,
@@ -484,6 +505,8 @@ class ToolDoor:
         kind: str,
         key: str,
         extra: dict[str, Any] | None = None,
+        *,
+        at: datetime,
     ) -> tuple[CallToolResult, str]:
         """Execute one allowed or approved call: swap stand-ins for real values, call the
         upstream tool, scrub the result, set flags, and log the result event. Returns the
@@ -496,7 +519,7 @@ class ToolDoor:
         else:
             try:
                 result = await asyncio.wait_for(
-                    self.catalogue.call(tool_id, self._swap(arguments)), EXECUTE_TIMEOUT_S
+                    self._upstream(tool_id, self._swap(arguments), at), EXECUTE_TIMEOUT_S
                 )
             except Exception as exc:
                 result = text_result(f"tool failed upstream ({type(exc).__name__})", error=True)
@@ -535,7 +558,8 @@ class ToolDoor:
             # "Use this write": apply the agent's fields over the version the owner saw.
             args[rule.versioned.version_arg] = hold.details["current_version"]
         key = intent_key(hold.hold_id, hold.tool_id, args)
-        now = self.clock.now()
+        # The approval's moment, not "now": replay decides at exactly that recorded instant.
+        now = parse_iso(hold.decided) if hold.decided else self.clock.now()
         if not self.holds.store.start_intent(key, hold.hold_id, hold.tool_id, iso_ms(now)):
             existing = self.holds.store.intent(key) or {}
             self.recorder.record(
@@ -554,6 +578,7 @@ class ToolDoor:
             "intent.executed",
             key,
             {"hold_id": hold.hold_id, "tool": hold.tool},
+            at=now,
         )
         data = {
             "is_error": bool(result.is_error),

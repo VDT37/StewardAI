@@ -13,6 +13,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator, Mapping
 from contextlib import AsyncExitStack, asynccontextmanager
+from datetime import datetime
 from typing import Any
 
 import httpx
@@ -131,6 +132,11 @@ def create_app(
         gate=gate,
     )
     model_door = ModelDoor(cfg, passes, recorder, a2a.active_request, steward_clock)
+
+    def pin_world(moment: datetime | None) -> None:
+        the_world.pinned = moment
+
+    tool_door.pin_time = pin_world
 
     async def read_calendar(agent: str, start: str, end: str) -> list[dict[str, Any]] | None:
         tool_id = next(

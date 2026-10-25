@@ -207,12 +207,31 @@ async def replay_events(
             if e.session_id == session_id
         )
 
-    async def catch_up(kind: str) -> None:
+    async def catch_up(kind: str) -> bool:
+        """Wait until the replay has produced this event; False if it never does."""
         deadline = time.monotonic() + WAIT_S
         while produced(kind) < recorded_counts[kind] and time.monotonic() < deadline:
             await asyncio.sleep(0.001)
         for _ in range(5):
             await asyncio.sleep(0.001)
+        return produced(kind) >= recorded_counts[kind]
+
+    want = [e for e in events if e["kind"] in DECISION_KINDS]
+    checked = 0
+
+    def diverged() -> bool:
+        """Compare the replay's new decision events with the recording, as they appear."""
+        nonlocal checked
+        got = [
+            e.as_dict()
+            for e in store.events(after_seq=0, limit=5000, newest_first=False)
+            if e.session_id == session_id and e.kind in DECISION_KINDS
+        ]
+        while checked < len(got):
+            if checked >= len(want) or decision(want[checked]) != decision(got[checked]):
+                return True
+            checked += 1
+        return False
 
     def spawn(coro: Any) -> None:
         task = asyncio.ensure_future(coro)
@@ -268,17 +287,20 @@ async def replay_events(
             else:
                 continue
             if kind in DECISION_KINDS:
-                await catch_up(kind)
+                caught_up = await catch_up(kind)
             else:
+                caught_up = True
                 for _ in range(5):
                     await asyncio.sleep(0.001)
+            # Stop at the first difference: everything after it would differ too.
+            if not caught_up or diverged():
+                break
         for _ in range(50):
             await asyncio.sleep(0.002)
         for task in list(tasks):
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
 
-    want = [e for e in events if e["kind"] in DECISION_KINDS]
     got = [
         e.as_dict()
         for e in store.events(limit=5000, newest_first=False)

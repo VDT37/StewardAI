@@ -30,7 +30,7 @@ from pydantic import BaseModel, ValidationError
 from steward_core import address, availability
 from steward_core.address import ADDRESS_TOOLS, StandIn
 from steward_core.checker import Ask, CheckContext, Checker, Decision, parse_fields
-from steward_core.clock import Clock, iso_ms, london_day
+from steward_core.clock import Clock, iso_ms, london_day, parse_iso
 from steward_core.notices import ChangeNotice, Watch, diff, notice_message, recompute
 from steward_core.policy import ContactRule, Policy, exposed_name
 from steward_core.request_types import REQUEST_TYPES, request_message
@@ -449,7 +449,8 @@ class AgentToAgentDoor:
         return "failed", {"request_id": request_id, "status": outcome.status}
 
     async def issue_stand_in(self, hold: Hold, choice: str) -> tuple[str, dict[str, Any]]:
-        now = self.clock.now()
+        # The approval's moment, so the expiry is the same in a replay.
+        now = parse_iso(hold.decided) if hold.decided else self.clock.now()
         fields = hold.args["fields"]
         token = f"[ADDR-{self.recorder.ids.number('ADDR')}]"
         binding = StandIn(
