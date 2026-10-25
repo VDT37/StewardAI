@@ -181,7 +181,7 @@ class Runner:
                 },
             )
 
-    async def scripted_write(self, change_id: str) -> None:
+    async def scripted_write(self, change_id: str, name: str) -> None:
         change = next(c for c in overnight_changes(self.anchor) if c.id == change_id)
         agent = "work" if change.data["writer"] == "work_agent" else "personal"
         args = {
@@ -189,7 +189,7 @@ class Runner:
             "fields": change.data["new"],
             "expected_version": change.data["read_version"],
         }
-        self.beat(change_id, actor="scripted", agent=agent, arguments=args)
+        self.beat(name, actor="scripted", agent=agent, change=change_id, arguments=args)
         await self.rt.tool_door.call(agent, "todo_update_item", args)
 
 
@@ -267,9 +267,13 @@ async def run_manchester(rt: Runtime, approvals: str, speed: float, attacks: str
 
         # Mon 00:50 and 01:30: the two to-do writes from the script.
         await runner.advance_to(runner.story(0, "00:50"))
-        await runner.scripted_write("chg-todo-expenses-done-by-work")
+        await runner.scripted_write(
+            "chg-todo-expenses-done-by-work", "00:50 the work agent marks the expenses done"
+        )
         await runner.advance_to(runner.story(0, "01:30"))
-        await runner.scripted_write("chg-todo-stale-write-by-personal")
+        await runner.scripted_write(
+            "chg-todo-stale-write-by-personal", "01:30 the personal agent renames the same item"
+        )
 
         # Mon 07:35: the owner approves the paid changes; Steward tells the work agent.
         await runner.advance_to(runner.story(0, "07:35"))
@@ -282,10 +286,13 @@ async def run_manchester(rt: Runtime, approvals: str, speed: float, attacks: str
             "system", "scenario.end", {"name": NAME, "beats": len(runner.beats), "pending": pending}
         )
         rt.scenario.update({"state": "done", "pending_holds": pending})
+        # Story time keeps running from Monday 07:35, so what is still held can be decided in
+        # the console; the owner returns to real time from the Recorder page.
+        rt.clock.set(rt.clock.now(), rate=1.0)
     except Exception as exc:
         rt.recorder.record("system", "scenario.failed", {"error": repr(exc)[:500]})
         rt.scenario.update({"state": "failed", "error": repr(exc)[:500]})
+        rt.clock.reset()
         raise
     finally:
-        rt.clock.reset()
         rt.recorder.record("system", "system.clock", rt.clock.describe())
