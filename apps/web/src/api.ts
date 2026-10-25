@@ -1,16 +1,24 @@
 // Typed client for Steward's admin API. The types mirror the JSON that
 // apps/gateway/src/steward_gateway/admin.py returns.
 
+export type Door = 'model' | 'tool' | 'a2a' | 'auth' | 'admin' | 'system'
+
 export type LogEvent = {
   seq: number
   ts: string
   session_id: string
   agent: string | null
-  door: 'model' | 'tool' | 'a2a' | 'auth' | 'admin' | 'system'
+  door: Door
   kind: string
   payload: Record<string, unknown>
   prev_hash: string
   hash: string
+}
+
+export type Flags = {
+  private_read: string[]
+  untrusted_seen: string[]
+  since: string | null
 }
 
 export type AgentSummary = {
@@ -21,6 +29,9 @@ export type AgentSummary = {
   spend_today_usd: string
   budget_usd_per_day: string
   asks_today: Record<string, number>
+  flags: Flags
+  holds_pending: number
+  trip_limit_gbp: string | null
 }
 
 export type AgentTool = {
@@ -29,6 +40,8 @@ export type AgentTool = {
   state: 'pinned' | 'mismatch' | 'missing' | 'built-in'
   fingerprint?: string | null
   pinned?: string | null
+  tool_class?: string | null
+  egress?: boolean | null
 }
 
 export type AgentRoute = {
@@ -36,6 +49,8 @@ export type AgentRoute = {
   request_types: string[]
   detail_minutes: number
   daily_limit: number
+  burst_max: number | null
+  burst_minutes: number
 }
 
 export type AgentDetail = AgentSummary & {
@@ -45,13 +60,79 @@ export type AgentDetail = AgentSummary & {
   recent: LogEvent[]
 }
 
+export type ClockInfo = { mode: 'system' | 'story'; rate: number; now: string; london: string }
+
+export type ScenarioState = {
+  state: string
+  name?: string
+  session_id?: string
+  beats?: Record<string, unknown>[]
+  error?: string
+  pending_holds?: string[]
+}
+
 export type Status = {
   session_id: string
+  session_label: string | null
   head: { seq: number; hash: string }
   checker: string
   demo_anchor: string
   agents: string[]
   pending: number
+  holds_pending: number
+  clock: ClockInfo
+  web_backend: string
+  telegram: boolean
+  scenario: ScenarioState | null
+}
+
+export type Choice = { id: string; label: string }
+
+export type Hold = {
+  hold_id: string
+  session_id: string
+  agent: string
+  kind: 'tool' | 'ask' | 'address'
+  tool: string
+  tool_id: string | null
+  args: Record<string, unknown>
+  fingerprint: string
+  fingerprint_short: string
+  rule: string
+  rules: string[]
+  reason: string
+  details: Record<string, unknown>
+  choices: Choice[]
+  state: string
+  created: string
+  expires: string
+  choice: string | null
+  result: Record<string, unknown> | null
+  decided: string | null
+  tool_class: string | null
+}
+
+export type Exchange = {
+  id: string
+  ts: string
+  asker: string | null
+  contact: string | null
+  request_type: string
+  status: string
+  fields?: Record<string, unknown>
+  rule?: string
+  reason?: string
+  hold_id?: string | null
+  asks_today?: number
+  reply_in?: Record<string, unknown>
+  reply_out?: Record<string, unknown>
+  dropped_fields?: string[]
+  rules_fired?: string[]
+  detail_minutes?: number
+  invalid_replies?: { fields: unknown; reason: string }[]
+  notices?: Record<string, unknown>[]
+  about?: string[]
+  stand_in?: { token: string; trip_date: string; expires: string }
 }
 
 export type VerifyResult = {
@@ -60,6 +141,60 @@ export type VerifyResult = {
   head_hash: string
   first_bad_seq: number | null
   reason: string | null
+}
+
+export type ReplayResult = {
+  ok?: boolean
+  state?: string
+  error?: string
+  session_id?: string
+  compared?: number
+  recorded_decisions?: number
+  replayed_decisions?: number
+  events_in_recording?: number
+  seconds?: number
+  first_difference?: {
+    index: number
+    recorded: { kind: string; payload: unknown } | null
+    replayed: { kind: string; payload: unknown } | null
+  } | null
+}
+
+export type PolicyView = {
+  agents: Record<
+    string,
+    {
+      model: string
+      tools: string[]
+      budget_usd_per_day: string
+      trip_limit_gbp: string | null
+      delivery: { kind: string } | null
+    }
+  >
+  contacts: {
+    from: string
+    to: string
+    request_types: string[]
+    detail_minutes: number
+    daily_limit: number
+    burst_max: number | null
+    burst_minutes: number
+  }[]
+  tools: Record<
+    string,
+    {
+      class: string
+      private: boolean
+      untrusted: boolean
+      trust_field: string | null
+      egress: boolean | null
+      stand_in_args: string[]
+      versioned: unknown
+    }
+  >
+  trusted_mail_domains: string[]
+  never_share: string[]
+  holds: { expires_hours: number; link_minutes: number; stand_in_hours: number }
 }
 
 export class Unauthorized extends Error {}
@@ -79,24 +214,48 @@ export function saveToken(token: string | null): void {
   else sessionStorage.removeItem(TOKEN_KEY)
 }
 
+export class ApiError extends Error {
+  status: number
+  constructor(status: number, message: string) {
+    super(message)
+    this.status = status
+  }
+}
+
 async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(path, {
     ...init,
-    headers: { ...init.headers, Authorization: `Bearer ${savedToken() ?? ''}` },
+    headers: {
+      ...init.headers,
+      ...(init.body ? { 'Content-Type': 'application/json' } : {}),
+      Authorization: `Bearer ${savedToken() ?? ''}`,
+    },
   })
   if (response.status === 401) throw new Unauthorized('owner token required')
-  if (!response.ok) throw new Error(`${response.status} ${response.statusText}`)
+  if (!response.ok) {
+    let detail = response.statusText
+    try {
+      const body = (await response.json()) as { detail?: string }
+      if (body.detail) detail = body.detail
+    } catch {
+      // keep the status text
+    }
+    throw new ApiError(response.status, detail)
+  }
   return (await response.json()) as T
 }
+
+const post = <T>(path: string, body?: unknown) =>
+  call<T>(path, { method: 'POST', body: body === undefined ? undefined : JSON.stringify(body) })
+
+const enc = encodeURIComponent
 
 export const api = {
   status: () => call<Status>('/admin/status'),
   agents: () => call<AgentSummary[]>('/admin/agents'),
-  agent: (id: string) => call<AgentDetail>(`/admin/agents/${encodeURIComponent(id)}`),
-  suspend: (id: string) =>
-    call<AgentSummary>(`/admin/agents/${encodeURIComponent(id)}/suspend`, { method: 'POST' }),
-  resume: (id: string) =>
-    call<AgentSummary>(`/admin/agents/${encodeURIComponent(id)}/resume`, { method: 'POST' }),
+  agent: (id: string) => call<AgentDetail>(`/admin/agents/${enc(id)}`),
+  suspend: (id: string) => post<AgentSummary>(`/admin/agents/${enc(id)}/suspend`),
+  resume: (id: string) => post<AgentSummary>(`/admin/agents/${enc(id)}/resume`),
   log: (params: Record<string, string | number | undefined>) => {
     const query = new URLSearchParams()
     for (const [key, value] of Object.entries(params)) {
@@ -105,10 +264,23 @@ export const api = {
     return call<LogEvent[]>(`/admin/log?${query}`)
   },
   verify: () => call<VerifyResult>('/admin/log/verify'),
-  repin: (toolId: string) =>
-    call<{ state: string }>(`/admin/tools/${encodeURIComponent(toolId)}/repin`, {
-      method: 'POST',
+  repin: (toolId: string) => post<{ state: string }>(`/admin/tools/${enc(toolId)}/repin`),
+  holds: (state = 'pending') => call<Hold[]>(`/admin/holds?state=${enc(state)}`),
+  decide: (hold: Hold, choice: string) =>
+    post<Hold>(`/admin/holds/${enc(hold.hold_id)}/decide`, {
+      choice,
+      fingerprint: hold.fingerprint,
     }),
+  exchanges: () => call<Exchange[]>('/admin/exchanges'),
+  clearFlags: (agent: string) => post<unknown>(`/admin/flags/${enc(agent)}/clear`),
+  policy: () => call<PolicyView>('/admin/policy'),
+  replay: (sessionId?: string) => post<ReplayResult>('/admin/replay', { session_id: sessionId ?? null }),
+  lastReplay: () => call<ReplayResult>('/admin/replay'),
+  scenario: () => call<ScenarioState>('/admin/scenario'),
+  clock: () => call<ClockInfo>('/admin/clock'),
+  resetClock: () => call<ClockInfo>('/admin/clock', { method: 'DELETE' }),
+  runScenario: (approvals: 'scripted' | 'manual') =>
+    post<ScenarioState>('/admin/scenario/run', { name: 'manchester', approvals, speed: 60 }),
   exportLog: async (): Promise<Blob> => {
     const response = await fetch('/admin/log/export.jsonl', {
       headers: { Authorization: `Bearer ${savedToken() ?? ''}` },
