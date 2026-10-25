@@ -196,8 +196,9 @@ class Runner:
 def page_hint(rt: Runtime) -> str:
     url = rt.settings.demo_page_url if rt.web_backend == "tavily" else _fixture_page()
     return (
-        f" Olivia's email in the work mailbox has the details. For step-free routes at "
-        f"Manchester Piccadilly, read the station guide at {url}."
+        " Olivia's email in the work mailbox has the details. I travel from Exeter St Davids:"
+        " book the train and a taxi from home to the station with the travel tools. For"
+        f" step-free routes at Manchester Piccadilly, read the station guide at {url}."
     )
 
 
