@@ -24,16 +24,30 @@ def test_each_agent_lists_only_its_pass(tmp_path: Path) -> None:
     assert names["work"] == [
         "ask",
         "calendar_list_events",
+        "hold_status",
         "mail_list_messages",
         "mail_read_message",
+        "mail_send_message",
+        "todo_delete_item",
         "todo_list_items",
+        "todo_update_item",
+        "travel_book_taxi",
+        "travel_book_train",
+        "travel_change_booking",
+        "travel_list_bookings",
+        "travel_search_trains",
+        "web_extract",
+        "web_search",
     ]
     assert names["personal"] == [
         "calendar_list_events",
         "gmail_list_messages",
         "gmail_read_message",
+        "hold_status",
+        "profile_read_needs",
         "reply",
         "todo_list_items",
+        "todo_update_item",
     ]
 
 
@@ -43,17 +57,22 @@ def test_calls_reach_the_agents_own_source_and_are_logged(tmp_path: Path) -> Non
             args = {"start_date": "2026-10-14", "end_date": "2026-10-14"}
             personal = await call(ctx, "personal", "calendar_list_events", args)
             work = await call(ctx, "work", "calendar_list_events", args)
-            return personal, work, ctx.store.events(kind="tool.call", newest_first=False)
+            calls = ctx.store.events(kind="tool.call", newest_first=False)
+            results = ctx.store.events(kind="tool.result", newest_first=False)
+            return personal, work, calls, results
 
-    personal, work, events = asyncio.run(scenario())
+    personal, work, events, results = asyncio.run(scenario())
     assert any("Cardiology" in e["title"] for e in personal.structured_content["events"])
     assert not any("Cardiology" in e["title"] for e in work.structured_content["events"])
     assert [(e.agent, e.payload["tool_id"]) for e in events] == [
         ("personal", "personal_calendar.list_events"),
         ("work", "work_calendar.list_events"),
     ]
-    assert events[0].payload["arguments"]["start_date"] == "2026-10-14"
-    assert events[0].payload["result_bytes"] > 0 and events[0].payload["is_error"] is False
+    assert events[0].payload["call"]["arguments"]["start_date"] == "2026-10-14"
+    assert events[0].payload["decision"] == "allow"
+    assert [r.payload["call_id"] for r in results] == [e.payload["call_id"] for e in events]
+    assert results[0].payload["result_bytes"] > 0 and results[0].payload["is_error"] is False
+    assert results[0].payload["flags_set"] == ["private_read"]
 
 
 def test_tool_off_the_pass_is_denied(tmp_path: Path) -> None:
@@ -65,7 +84,7 @@ def test_tool_off_the_pass_is_denied(tmp_path: Path) -> None:
 
     gmail, reply, denied = asyncio.run(scenario())
     assert gmail.is_error and reply.is_error
-    assert {e.payload["tool"] for e in denied} == {"gmail_read_message", "reply"}
+    assert {e.payload["call"]["tool"] for e in denied} == {"gmail_read_message", "reply"}
 
 
 def rug_pulled_servers() -> dict[str, MCPServer]:

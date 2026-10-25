@@ -6,7 +6,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from gateway_helpers import call, fast_policy, running
+from gateway_helpers import call, fast_policy, running, without_burst
 
 from steward_gateway.adapters import OpenClawExecAdapter
 from steward_gateway.admin import AdminContext
@@ -104,12 +104,12 @@ def test_unknown_type_is_refused_logged_and_counted(tmp_path: Path) -> None:
     assert ctx.store.events(kind="a2a.request") == []
 
 
-def test_eleventh_ask_of_the_day_is_refused(tmp_path: Path) -> None:
+def test_eleventh_ask_of_the_day_is_held(tmp_path: Path) -> None:
     async def quiet(ctx: AdminContext, request_id: str, message: str) -> None:
         return None
 
     async def scenario() -> tuple[list[str], AdminContext]:
-        policy = fast_policy(reply_grace_s=0)
+        policy = without_burst(fast_policy(reply_grace_s=0))
         async with running(tmp_path, quiet, policy=policy) as (_, ctx, _):
             statuses = []
             for _ in range(11):
@@ -118,9 +118,27 @@ def test_eleventh_ask_of_the_day_is_refused(tmp_path: Path) -> None:
             return statuses, ctx
 
     statuses, ctx = asyncio.run(scenario())
-    assert statuses == ["no_answer"] * 10 + ["refused"]
-    assert ctx.store.events(kind="a2a.refused")[0].payload["rule"] == "daily_limit"
+    assert statuses == ["no_answer"] * 10 + ["held"]
+    (held,) = ctx.store.events(kind="a2a.held")
+    assert held.payload["rule"] == "daily_limit" and held.payload["hold_id"].startswith("h-")
     assert len(ctx.store.events(kind="a2a.no_reply", limit=50)) == 10
+    (hold,) = ctx.holds.pending()
+    assert hold.kind == "ask" and hold.args["request_type"] == "availability"
+
+
+def test_a_burst_of_asks_is_held(tmp_path: Path) -> None:
+    async def quiet(ctx: AdminContext, request_id: str, message: str) -> None:
+        return None
+
+    async def scenario() -> list[str]:
+        async with running(tmp_path, quiet, policy=fast_policy(reply_grace_s=0)) as (_, ctx, _):
+            statuses = []
+            for _ in range(7):
+                answer = await call(ctx, "work", "ask", ASK)
+                statuses.append(answer.structured_content.get("rule") or "asked")
+            return statuses
+
+    assert asyncio.run(scenario()) == ["asked"] * 5 + ["burst", "burst"]
 
 
 def test_no_reply_in_time_shares_nothing(tmp_path: Path) -> None:

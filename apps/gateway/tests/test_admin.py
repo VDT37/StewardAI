@@ -23,17 +23,33 @@ def test_agent_detail_shows_tools_pins_and_routes(tmp_path: Path) -> None:
         "calendar_list_events": "pinned",
         "mail_list_messages": "pinned",
         "mail_read_message": "pinned",
+        "mail_send_message": "pinned",
         "todo_list_items": "pinned",
+        "todo_update_item": "pinned",
+        "todo_delete_item": "pinned",
+        "travel_search_trains": "pinned",
+        "travel_list_bookings": "pinned",
+        "travel_book_train": "pinned",
+        "travel_book_taxi": "pinned",
+        "travel_change_booking": "pinned",
+        "web_search": "pinned",
+        "web_extract": "pinned",
         "ask": "built-in",
+        "hold_status": "built-in",
     }
+    classes = {t["name"]: t.get("tool_class") for t in work["tool_list"]}
+    assert classes["mail_send_message"] == "send" and classes["web_extract"] == "read"
     assert work["routes"] == [
         {
             "to": "personal",
-            "request_types": ["availability"],
+            "request_types": ["availability", "travel_limits", "needs", "address_for_booking"],
             "detail_minutes": 30,
             "daily_limit": 10,
+            "burst_max": 5,
+            "burst_minutes": 10,
         }
     ]
+    assert work["trip_limit_gbp"] == "300" and work["holds_pending"] == 0
 
 
 def test_log_verify_export_and_stream(tmp_path: Path) -> None:
@@ -62,9 +78,9 @@ def test_session_tools_and_pending(tmp_path: Path) -> None:
         new = client.post("/admin/session", json={"label": "rehearsal"}, headers=OWNER_H).json()
         assert new["session_id"] != before and ctx.recorder.session_id == new["session_id"]
         tools = client.get("/admin/tools", headers=OWNER_H).json()
-        assert {t["state"] for t in tools} == {"pinned"} and len(tools) == 7
+        assert {t["state"] for t in tools} == {"pinned"} and len(tools) == 20
         refreshed = client.post("/admin/tools/refresh", headers=OWNER_H).json()
-        assert len(refreshed) == 7
+        assert len(refreshed) == 20
         repin = client.post("/admin/tools/shared_todo.list_items/repin", headers=OWNER_H)
         assert repin.json()["state"] == "pinned"
         assert client.post("/admin/tools/nope.x/repin", headers=OWNER_H).status_code == 404

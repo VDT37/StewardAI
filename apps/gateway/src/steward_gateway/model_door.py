@@ -4,6 +4,11 @@ The pass decides the agent and the agent decides the model. Steward forwards wit
 masks listed strings first, forces usage on streamed calls so every call is metered, relays the
 answer byte for byte and writes a model.call event with tokens and cost. Message contents are
 not logged (only usage, tool-call names and which mask entries fired).
+
+Phase 2: budgets block. Before forwarding, the door adds up the agent's metered spend for the
+current Europe/London day (on Steward's clock); at or over the budget the call is refused with
+HTTP 429 and an OpenAI-style error of type budget_exceeded, and model.budget_refused is logged.
+The call that crosses the budget still completes, because its cost is only known afterwards.
 """
 
 from __future__ import annotations
@@ -11,12 +16,14 @@ from __future__ import annotations
 import json
 import time
 from collections.abc import AsyncIterator, Callable
+from decimal import Decimal
 from typing import Any
 
 import httpx
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
+from steward_core.clock import Clock, london_day, london_day_end, london_day_start
 from steward_core.metering import call_cost, mask_body
 from steward_gateway.recorder import Recorder
 from steward_gateway.settings import PassBook, Settings
@@ -115,13 +122,58 @@ class ModelDoor:
         passes: PassBook,
         recorder: Recorder,
         active_request: Callable[[str], str | None],
+        clock: Clock,
     ) -> None:
         self.settings = settings
         self.passes = passes
         self.recorder = recorder
         # The open agent-to-agent request this agent is answering, if any (for the log only).
         self.active_request = active_request
+        self.clock = clock
         self.client: httpx.AsyncClient | None = None
+
+    def spent_today(self, agent: str) -> Decimal:
+        """The agent's metered spend for the current London day. A scenario run counts only
+        its own session, so repeated runs of the story day start from zero."""
+        day = london_day(self.clock.now())
+        session = None if self.recorder.scope == "live" else self.recorder.session_id
+        return self.recorder.store.spend_since(
+            agent, london_day_start(day), until_ts=london_day_end(day), session_id=session
+        )
+
+    def over_budget(self, agent: str, model: str) -> Response | None:
+        """A 429 response (and a logged refusal) when the agent has used its daily budget."""
+        budget = self.settings.policy.agents[agent].budget_usd_per_day
+        spent = self.spent_today(agent)
+        if spent < budget:
+            return None
+        self.recorder.record(
+            "model",
+            "model.budget_refused",
+            {"model": model, "spent_usd": str(spent), "budget_usd": str(budget)},
+            agent=agent,
+        )
+        message = f"daily budget reached: spent ${spent} of ${budget}; ask the owner"
+        return JSONResponse(error_body(message, "budget_exceeded"), 429)
+
+    def replay_call(self, agent: str, recorded: dict[str, Any]) -> None:
+        """Replay: run the budget check for a recorded call and meter it again, no upstream."""
+        model = str(recorded.get("model") or self.settings.policy.agents[agent].model)
+        if self.over_budget(agent, model) is not None:
+            return
+        usage = recorded.get("usage")
+        self._record(
+            agent,
+            model,
+            0.0,
+            status=int(recorded.get("status") or 200),
+            stream=bool(recorded.get("stream")),
+            usage=usage,
+            tool_calls=list(recorded.get("tool_calls") or []),
+            mask_fired=list(recorded.get("mask_fired") or []),
+            a2a_request=recorded.get("a2a_request"),
+            error=recorded.get("error"),
+        )
 
     def _denied(self, request: Request, path: str) -> tuple[str | None, Response | None]:
         agent = self.passes.identify(request.headers.get("authorization"))
@@ -180,6 +232,9 @@ class ModelDoor:
                 error_body("body must be a JSON object", "invalid_request_error"), 400
             )
 
+        refused = self.over_budget(agent, model)
+        if refused is not None:
+            return refused
         body, mask_fired = mask_body(body, policy.mask)
         # The pass decides the model, not the agent.
         body["model"] = model
@@ -292,7 +347,7 @@ class ModelDoor:
             "model": model,
             "stream": stream,
             "status": status,
-            "latency_ms": round((time.perf_counter() - started) * 1000),
+            "latency_ms": round((time.perf_counter() - started) * 1000) if started else 0,
             "usage": usage_tokens(usage),
             "cost_usd": call_cost(usage, self.settings.policy.prices.get(model)),
             "tool_calls": tool_calls or [],

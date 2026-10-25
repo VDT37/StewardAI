@@ -11,6 +11,7 @@ from pathlib import Path
 from steward_core.policy import Policy, load_policy
 
 TOKEN_FACTORY_URL = "https://api.tokenfactory.nebius.com/v1"
+DEMO_PAGE_URL = "https://vdt37.github.io/StewardAI/demo/piccadilly-step-free.html"
 
 
 @dataclass(frozen=True)
@@ -24,6 +25,19 @@ class Settings:
     console_dir: Path = Path("apps/web/dist")
     upstream_url: str = TOKEN_FACTORY_URL
     openshell_bin: str = "openshell"
+    # Optional (Phase 2). Without a Tavily key the web tools read the fixture pages.
+    tavily_api_key: str | None = None
+    web_backend: str | None = None
+    # The public copy of the poisoned station guide (GitHub Pages, P2-D5 A).
+    demo_page_url: str = DEMO_PAGE_URL
+    # Signs approval links (P2-D10); links are off without it.
+    approval_secret: str | None = None
+    public_url: str = "http://localhost:8000"
+    # Telegram approval cards; off unless both are set.
+    telegram_token: str | None = None
+    telegram_owner_id: int | None = None
+    # Agent name -> API key for its delivery (hermes-runs), read from the env var it names.
+    delivery_keys: Mapping[str, str] = field(default_factory=dict)
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> Settings:
@@ -39,6 +53,12 @@ class Settings:
         tokens = [values[name] for name in names[1:]]
         if len(set(tokens)) != len(tokens):
             raise RuntimeError("the owner token and every pass must all differ")
+        delivery_keys = {}
+        for name, agent in policy.agents.items():
+            env_name = agent.delivery.key_env if agent.delivery else None
+            if env_name and source.get(env_name, "").strip():
+                delivery_keys[name] = source[env_name].strip()
+        owner_id = source.get("STEWARD_TELEGRAM_OWNER_ID", "").strip()
         return cls(
             nebius_api_key=values["NEBIUS_API_KEY"],
             owner_token=values["STEWARD_OWNER_TOKEN"],
@@ -47,7 +67,20 @@ class Settings:
             db_path=Path(source.get("STEWARD_DB_PATH", "var/steward.db")),
             console_dir=Path(source.get("STEWARD_CONSOLE_DIR", "apps/web/dist")),
             openshell_bin=source.get("STEWARD_OPENSHELL_BIN", "openshell"),
+            tavily_api_key=_optional(source, "TAVILY_API_KEY"),
+            web_backend=_optional(source, "STEWARD_WEB_BACKEND"),
+            demo_page_url=_optional(source, "STEWARD_DEMO_PAGE_URL") or DEMO_PAGE_URL,
+            approval_secret=_optional(source, "STEWARD_APPROVAL_SECRET"),
+            public_url=_optional(source, "STEWARD_PUBLIC_URL") or "http://localhost:8000",
+            telegram_token=_optional(source, "TELEGRAM_BOT_TOKEN"),
+            telegram_owner_id=int(owner_id) if owner_id.lstrip("-").isdigit() else None,
+            delivery_keys=delivery_keys,
         )
+
+
+def _optional(source: Mapping[str, str], name: str) -> str | None:
+    value = source.get(name, "").strip()
+    return value or None
 
 
 def bearer_token(authorization: str | None) -> str | None:

@@ -37,7 +37,12 @@ python_version = "3.12"
 strict = true
 files = ["apps/gateway/src", "packages/core/src", "packages/fixtures/src", "spikes"]
 
+# tavily-python ships no type information.
+[[tool.mypy.overrides]]
+module = ["tavily", "tavily.*"]
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
-testpaths = ["apps", "packages"]
+testpaths = ["apps", "packages", "evals"]
 pythonpath = ["apps/gateway/tests"]
 addopts = "--import-mode=importlib"

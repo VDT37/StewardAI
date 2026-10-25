@@ -1,8 +1,9 @@
-"""How Steward hands an agent-to-agent request to the answering agent.
+"""How Steward starts a turn of an agent: to answer a request, or to pass on a note.
 
 The answering agent gets one message, rendered by Steward from typed fields, and answers by
 calling Steward's reply tool. The adapter only starts the agent's turn and reports how the run
-ended; the reply itself arrives through the tool door.
+ended; the reply itself arrives through the tool door. Phase 2 adds Hermes runs, used for change
+notices and for telling the work agent that a held call was decided.
 """
 
 from __future__ import annotations
@@ -13,6 +14,8 @@ import time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Protocol
+
+import httpx
 
 
 @dataclass
@@ -113,6 +116,83 @@ class OpenClawExecAdapter:
             final=envelope.get("final") if isinstance(envelope.get("final"), str) else None,
             error=json.dumps(error) if error else None,
         )
+
+
+class HermesRunsAdapter:
+    """Starts a Hermes run through its API server (Phase 2: change notices and the result of a
+    decided hold, P2-D9 option B), then polls the run until it ends:
+
+        POST {url}/v1/runs {"input": <message>, "session_id": <session>}
+        GET  {url}/v1/runs/{run_id}
+
+    On the VM the API server is reached through the OpenShell forward on 127.0.0.1:8642 with
+    HERMES_API_KEY. Runs for one agent are serialised, so two notes never overlap in a session.
+    """
+
+    TERMINAL = frozenset({"completed", "failed", "cancelled", "interrupted"})
+
+    def __init__(
+        self,
+        url: str,
+        api_key: str,
+        *,
+        timeout_s: int = 600,
+        session_id: str = "steward",
+        transport: httpx.AsyncBaseTransport | None = None,
+        poll_s: float = 2.0,
+    ) -> None:
+        self.url = url.rstrip("/")
+        self.api_key = api_key
+        self.timeout_s = timeout_s
+        self.session_id = session_id
+        self.transport = transport
+        self.poll_s = poll_s
+        self._lock = asyncio.Lock()
+
+    async def deliver(self, request_id: str, message: str) -> DeliveryResult:
+        async with self._lock:
+            return await self._run(request_id, message)
+
+    async def _run(self, request_id: str, message: str) -> DeliveryResult:
+        started = time.perf_counter()
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+        timeout = httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=10.0)
+        try:
+            async with httpx.AsyncClient(
+                base_url=self.url, headers=headers, timeout=timeout, transport=self.transport
+            ) as client:
+                response = await client.post(
+                    "/v1/runs",
+                    json={"input": message, "session_id": self.session_id},
+                    headers={"Idempotency-Key": request_id},
+                )
+                if response.status_code >= 400:
+                    return DeliveryResult(
+                        False, "not_started", _ms(started), error=f"HTTP {response.status_code}"
+                    )
+                body = response.json()
+                run_id = body.get("run_id") or body.get("id")
+                if not run_id:
+                    return DeliveryResult(False, "no_run_id", _ms(started))
+                deadline = time.monotonic() + self.timeout_s
+                run: dict[str, Any] = {}
+                while time.monotonic() < deadline:
+                    polled = await client.get(f"/v1/runs/{run_id}")
+                    run = polled.json() if polled.status_code < 400 else {}
+                    if run.get("status") in self.TERMINAL:
+                        break
+                    await asyncio.sleep(self.poll_s)
+                status = str(run.get("status") or "timeout")
+                output = run.get("output")
+                return DeliveryResult(
+                    ok=status == "completed",
+                    status=status,
+                    duration_ms=_ms(started),
+                    usage=run.get("usage") if isinstance(run.get("usage"), dict) else None,
+                    final=output if isinstance(output, str) else None,
+                )
+        except httpx.HTTPError as exc:
+            return DeliveryResult(False, "unreachable", _ms(started), error=type(exc).__name__)
 
 
 class MockAdapter:
