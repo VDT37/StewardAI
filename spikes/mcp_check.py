@@ -77,7 +77,11 @@ def main() -> int:
         arguments: dict[str, object] = {
             "contact": "personal",
             "request_type": args.ask_type,
-            "fields": dates if args.ask_type == "availability" else {"question": "why busy?"},
+            "fields": dates
+            if args.ask_type == "availability"
+            else {}
+            if args.ask_type in ("travel_limits", "needs")
+            else {"question": "why busy?"},
         }
     else:
         tool, arguments = TOOL, dict(dates)
@@ -95,7 +99,12 @@ def main() -> int:
         if args.ask_type:
             status = (payload or {}).get("status")
             print(f"ask {args.ask_type!r}: status={status} reason={(payload or {}).get('reason')}")
-            expected = "answered" if args.ask_type == "availability" else "refused"
+            expected = {
+                "availability": "answered",
+                "travel_limits": "answered",
+                "needs": "answered",
+                "address_for_booking": "held",
+            }.get(args.ask_type, "refused")
             if status != expected:
                 failures.append(f"ask status {status}, expected {expected}")
             if payload and payload.get("summary"):
