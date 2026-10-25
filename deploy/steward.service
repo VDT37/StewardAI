@@ -1,0 +1,23 @@
+# Steward as a systemd user service on the VM (Phase 2 Part J, decision P2-D8 option A).
+# Replaces the Phase 1 tmux session. One worker: open agent-to-agent requests live in memory.
+#   mkdir -p ~/.config/systemd/user
+#   cp ~/StewardAI/deploy/steward.service ~/.config/systemd/user/steward.service
+#   systemctl --user daemon-reload && systemctl --user enable --now steward
+#   journalctl --user -u steward -f
+# Linger is on (loginctl enable-linger), so it keeps running after logout and starts at boot.
+[Unit]
+Description=Steward: model door, tool door, agent-to-agent door and console
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/StewardAI
+# uv lives in ~/.local/bin; openshell (for the OpenClaw adapter) in /usr/bin.
+Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/.local/bin/uv run --package steward-gateway --env-file .env uvicorn steward_gateway.app:app --host 0.0.0.0 --port 8000
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=20
+
+[Install]
+WantedBy=default.target
