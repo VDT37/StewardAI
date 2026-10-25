@@ -1,1 +1,144 @@
 @import "tailwindcss";
+@import "@fontsource/atkinson-hyperlegible-next/400.css";
+@import "@fontsource/atkinson-hyperlegible-next/700.css";
+@import "@fontsource/atkinson-hyperlegible-mono/400.css";
+
+/* Colour carries meaning here: slate blue is the work agent, pine green the personal agent,
+   amber is something waiting for you, red is refused, violet is a reply Steward trimmed. */
+:root {
+  --paper: #f3f5f4;
+  --card: #ffffff;
+  --ink: #17202a;
+  --muted: #545f6b;
+  --line: #d6dde2;
+  --work: #2c5a86;
+  --work-soft: #e6eef6;
+  --personal: #2b7656;
+  --personal-soft: #e3f1ea;
+  --held: #835500;
+  --held-soft: #fff0d2;
+  --held-line: #e2ac44;
+  --refused: #a3261d;
+  --refused-soft: #fbe8e5;
+  --trimmed: #5a4a96;
+  --trimmed-soft: #efecf9;
+  --quiet-soft: #eef1f3;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #11161b;
+    --card: #192027;
+    --ink: #e7ecf0;
+    --muted: #a6b0ba;
+    --line: #2d363f;
+    --work: #93b9de;
+    --work-soft: #1c2a38;
+    --personal: #86cba9;
+    --personal-soft: #172d25;
+    --held: #f2c673;
+    --held-soft: #36290e;
+    --held-line: #8f6a22;
+    --refused: #f29d93;
+    --refused-soft: #3a1c19;
+    --trimmed: #c4b7f2;
+    --trimmed-soft: #27223d;
+    --quiet-soft: #222a32;
+    color-scheme: dark;
+  }
+}
+
+@theme inline {
+  --color-paper: var(--paper);
+  --color-card: var(--card);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-work: var(--work);
+  --color-work-soft: var(--work-soft);
+  --color-personal: var(--personal);
+  --color-personal-soft: var(--personal-soft);
+  --color-held: var(--held);
+  --color-held-soft: var(--held-soft);
+  --color-held-line: var(--held-line);
+  --color-refused: var(--refused);
+  --color-refused-soft: var(--refused-soft);
+  --color-trimmed: var(--trimmed);
+  --color-trimmed-soft: var(--trimmed-soft);
+  --color-quiet-soft: var(--quiet-soft);
+  --font-sans: "Atkinson Hyperlegible Next", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Atkinson Hyperlegible Mono", ui-monospace, monospace;
+}
+
+html {
+  font-size: 16px;
+}
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-sans);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 3px solid var(--work);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* The approval card is a pass: the request on the left, a stub on the right that holds the
+   fingerprint and the decision, separated by a perforation with a notch at each end. */
+.pass-stub {
+  position: relative;
+  border-left: 2px dashed var(--held-line);
+}
+.pass-stub::before,
+.pass-stub::after {
+  content: "";
+  position: absolute;
+  left: -11px;
+  width: 20px;
+  height: 20px;
+  border-radius: 9999px;
+  background: var(--paper);
+  border: 1px solid var(--held-line);
+}
+.pass-stub::before {
+  top: -11px;
+}
+.pass-stub::after {
+  bottom: -11px;
+}
+@media (max-width: 1023px) {
+  .pass-stub {
+    border-left: 0;
+    border-top: 2px dashed var(--held-line);
+  }
+  .pass-stub::before,
+  .pass-stub::after {
+    display: none;
+  }
+}
+
+/* One deliberate motion: a new hold arrives with a short glow, so it is noticed. */
+@keyframes arrive {
+  from {
+    box-shadow: 0 0 0 6px var(--held-soft);
+  }
+  to {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+.arrive {
+  animation: arrive 1.6s ease-out 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .arrive {
+    animation: none;
+  }
+}
