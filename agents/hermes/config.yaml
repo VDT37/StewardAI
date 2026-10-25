@@ -1,17 +1,40 @@
 # Hermes config for the work agent, baked into the image at ~/.hermes/config.yaml.
-# The sandbox reaches the Steward stub on the VM host as host.openshell.internal.
+# The sandbox reaches Steward on the VM host as host.openshell.internal.
 model:
-  # The stub forces the work pass's model anyway; keep this in step with STEWARD_MODEL_WORK.
+  # Steward forces the work pass's model anyway (config/steward.yaml); keep this in step.
   default: nvidia/nemotron-3-super-120b-a12b
   provider: custom
   base_url: http://host.openshell.internal:8000/v1
   # Holds the OpenShell placeholder, never the real pass. The proxy swaps it on the wire.
   key_env: STEWARD_PASS_WORK
+agent:
+  # The work agent only needs Steward's tools; the sandbox blocks everything else anyway.
+  # Turning the built-in toolsets off cuts the prompt (about 13k tokens per call in Phase 0).
+  # Names from the Hermes toolsets reference (the API server's default set).
+  disabled_toolsets:
+    - file
+    - terminal
+    - web
+    - browser
+    - memory
+    - skills
+    - vision
+    - image_gen
+    - todo
+    - delegation
+    - code_execution
+    - cronjob
+    - session_search
 mcp_servers:
   steward:
     # No transport key, so Hermes uses Streamable HTTP.
     url: http://host.openshell.internal:8000/tools/work/mcp
     headers:
       Authorization: "Bearer ${STEWARD_PASS_WORK}"
-    timeout: 60
+    # ask waits up to 150 s for the personal agent's reply, so tool calls need longer than that.
+    timeout: 300
     connect_timeout: 30
+    tools:
+      # Steward serves tools only; skip the resource and prompt helper tools.
+      resources: false
+      prompts: false

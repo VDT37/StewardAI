@@ -1,6 +1,6 @@
 # 0004. Hash-chained flight log
 
-Status: Accepted (2026-10-14)
+Status: Accepted (2026-10-14). Updated 2026-10-24 when the log was built in Phase 1.
 
 ## Context
 
@@ -41,3 +41,14 @@ A plain table. The simplest option, with no tamper evidence.
 Ed25519-signed rows. Stronger, because a rewrite would need the private key. It also means key storage and rotation to handle.
 
 An external transparency log. Overkill for one person's agents.
+
+## Update (2026-10-24): as built in Phase 1
+
+The two points left open above are settled, and the store changed.
+
+- Store: SQLite for v1, one file on the VM (`var/steward.db`, WAL mode), instead of PostgreSQL. Six days were left, the laptop cannot run Docker, and tests and CI then need no database service. The store sits behind one small class (`steward_core.store.Store`) and its SQL avoids SQLite-only types, so PostgreSQL can replace it later.
+- Encoding: `hash = sha256(prev_hash_hex + "\n" + jcs(row))`, hex encoded. The previous hash joins as its 64 ASCII hex characters, then a newline, then the RFC 8785 canonical JSON of the row without its own hash: `{seq, ts, session_id, agent, door, kind, payload, prev_hash}`. The genesis value is 64 zeros. The payload column stores `jcs(payload)`, so parsing it back gives exactly the object that was hashed.
+- Append-only: `BEFORE UPDATE` and `BEFORE DELETE` triggers abort with "flight log is append-only". Appends read the last hash and insert inside one `BEGIN IMMEDIATE` transaction behind one lock, so the chain cannot fork.
+- Verify and export: `GET /admin/log/verify` recomputes the chain and names the first row that does not match; `GET /admin/log/export.jsonl` writes one canonical JSON row per line.
+
+The triggers only guard SQL statements. A raw edit of the file gets past them, and verify then reports the edited row; the unit tests do exactly this.

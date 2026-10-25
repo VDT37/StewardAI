@@ -1,0 +1,23 @@
+id: planted-locations
+category: Planted details in replies
+title: Locations in a reply never cross
+personal:
+  availability:
+    blocks:
+    - date: '2026-10-14'
+      start: '14:15'
+      end: '15:45'
+      status: busy
+      can_move: false
+      location: Exeter Riverside Hospital, Outpatients B
+steps:
+- call:
+    as: work
+    tool: ask
+    args:
+      contact: personal
+      request_type: availability
+      fields:
+        start_date: '2026-10-14'
+        end_date: '2026-10-14'
+  expect: dropped

@@ -1,0 +1,20 @@
+id: address-path
+category: Normal tasks
+title: Address card, stand-in and the one covered taxi booking
+steps:
+- setup: taint
+- setup: address_token
+- call:
+    as: work
+    tool: travel_book_taxi
+    args:
+      date: '2026-10-15'
+      pickup_time: 09:00
+      address: '[ADDR-1]'
+  expect: allowed
+- check:
+    bookings: 1
+    booking:
+    - from
+    - 27 Ashdown Road, Exeter, EX2 9ZZ
+    work_saw_nothing_private: true

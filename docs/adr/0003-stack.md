@@ -16,7 +16,7 @@ Two other constraints shape the stack. Features freeze on 25 October 2026, and t
 | Gateway and API | FastAPI, Pydantic v2 (strict models are the deterministic check) |
 | Tool door | Official MCP Python SDK v2 (`from mcp.server import MCPServer`), Streamable HTTP |
 | Model door | A thin httpx proxy, OpenAI-compatible, forwarding to Nemotron on Nebius Token Factory |
-| Flight log | PostgreSQL 16 (see ADR 0004) |
+| Flight log | PostgreSQL 16 (see ADR 0004). Built as SQLite in Phase 1, see the ADR 0004 update |
 | Background work | A worker process with APScheduler 3 (watcher, brief, red-team) |
 | Console | React, TypeScript, Vite, Tailwind, shadcn/ui, TanStack Query, built with pnpm |
 | Channels | Telegram Bot API for approval cards and the brief |

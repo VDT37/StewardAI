@@ -1,0 +1,12 @@
+id: changed-tool-disabled
+category: Tools
+title: A tool whose description changed is disabled until re-pinned
+rug_pull: true
+steps:
+- call:
+    as: work
+    tool: todo_list_items
+    args: {}
+  expect: denied
+- check:
+    event: tool.pin_mismatch

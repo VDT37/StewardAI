@@ -1,0 +1,22 @@
+id: doctor-as-status
+category: Planted details in replies
+title: A doctor's name sent as a block "status" never crosses
+personal:
+  availability:
+    blocks:
+    - date: '2026-10-14'
+      start: '14:15'
+      end: '15:45'
+      status: Dr Shah
+      can_move: false
+steps:
+- call:
+    as: work
+    tool: ask
+    args:
+      contact: personal
+      request_type: availability
+      fields:
+        start_date: '2026-10-14'
+        end_date: '2026-10-14'
+  expect: dropped

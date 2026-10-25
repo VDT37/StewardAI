@@ -1,0 +1,10 @@
+id: read-own-mail
+category: Normal tasks
+title: The work agent reads its own mail
+steps:
+- call:
+    as: work
+    tool: mail_read_message
+    args:
+      id: w-msg-visit-request
+  expect: allowed

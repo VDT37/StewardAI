@@ -1,0 +1,125 @@
+# Steward policy file. Committed; holds no secrets. Each agent's pass lives in .env under the
+# variable named by pass_env. Tool ids are <server>.<tool> on Steward's upstream tool servers.
+agents:
+  work:
+    pass_env: STEWARD_PASS_WORK
+    model: nvidia/nemotron-3-super-120b-a12b
+    tool_prefix: mcp__steward__
+    tools:
+      - work_calendar.list_events
+      - work_mail.list_messages
+      - work_mail.read_message
+      - work_mail.send_message
+      - shared_todo.list_items
+      - shared_todo.update_item
+      - shared_todo.delete_item
+      - travel.search_trains
+      - travel.list_bookings
+      - travel.book_train
+      - travel.book_taxi
+      - travel.change_booking
+      - web.search
+      - web.extract
+    budget_usd_per_day: "2.50"
+    # Work travel may be booked up to this per trip without asking (GBP).
+    trip_limit_gbp: "300"
+    # Change notices and decided holds reach Hermes as a new run (P2-D9 B).
+    delivery:
+      kind: hermes-runs
+      url: http://127.0.0.1:8642
+      key_env: HERMES_API_KEY
+      timeout_s: 600
+  personal:
+    pass_env: STEWARD_PASS_PERSONAL
+    model: nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B
+    tool_prefix: steward__
+    tools:
+      - personal_calendar.list_events
+      - personal_gmail.list_messages
+      - personal_gmail.read_message
+      - personal_profile.read_needs
+      - shared_todo.list_items
+      - shared_todo.update_item
+    budget_usd_per_day: "1.25"
+    delivery:
+      kind: openclaw-exec
+      sandbox: personal-agent
+      # Nano sometimes reasons for more than two minutes before it replies (live run 2).
+      timeout_s: 200
+
+contacts:
+  - from: work
+    to: personal
+    request_types: [availability, travel_limits, needs, address_for_booking]
+    detail_minutes: 30
+    daily_limit: 10
+    # More than 5 asks within 10 minutes are held (burst detection).
+    burst_max: 5
+    burst_minutes: 10
+
+# Every upstream tool's class. MCP annotations are untrusted hints, so classes live here.
+#   read: allowed. write: allowed, with the stale check when versioned. spend: allowed while the
+#   trip stays within trip_limit_gbp, else held. send, change_paid, destructive: always held.
+#   private: a result sets private_read. untrusted (or trust_field from an untrusted domain):
+#   a result sets untrusted_seen. With both set, every egress call is held (the trifecta).
+#   egress defaults to true for send, spend and change_paid.
+tools:
+  work_calendar.list_events: {class: read, private: true}
+  personal_calendar.list_events: {class: read, private: true}
+  work_mail.list_messages: {class: read, private: true}
+  work_mail.read_message: {class: read, private: true, trust_field: from}
+  work_mail.send_message: {class: send}
+  personal_gmail.list_messages: {class: read, private: true}
+  personal_gmail.read_message: {class: read, private: true, trust_field: from}
+  personal_profile.read_needs: {class: read, private: true}
+  shared_todo.list_items: {class: read, private: true}
+  shared_todo.get_item: {class: read, private: true}
+  shared_todo.update_item:
+    class: write
+    versioned: {id_arg: id, version_arg: expected_version, read_tool: shared_todo.get_item}
+  shared_todo.delete_item: {class: destructive}
+  travel.search_trains: {class: read}
+  travel.list_bookings: {class: read}
+  travel.quote: {class: read}
+  travel.book_train: {class: spend, quote_tool: travel.quote, ledger_tool: travel.list_bookings}
+  travel.book_taxi:
+    class: spend
+    quote_tool: travel.quote
+    ledger_tool: travel.list_bookings
+    stand_in_args: [address]
+  travel.change_booking:
+    class: change_paid
+    quote_tool: travel.quote
+    ledger_tool: travel.list_bookings
+    stand_in_args: [address]
+  web.search: {class: read, untrusted: true, egress: true}
+  web.extract: {class: read, untrusted: true, egress: true}
+
+# Mail from these sender domains does not mark an agent as having seen untrusted content.
+# The client's real domain is trusted; the lookalike (brightwater-logistlcs.example) is not.
+trusted_mail_domains: [yourcompany.example, brightwater-logistics.example]
+
+never_share: [passwords, one_time_codes, card_numbers, account_numbers, id_numbers, health_details, reasons]
+
+# Exact strings the model door replaces with [MASKED-n] before a call leaves Steward.
+mask: []
+
+# USD per million tokens, from GET /v1/models?verbose=true on 21 Oct 2026
+# (spikes/results/models-verbose.json).
+prices:
+  nvidia/nemotron-3-super-120b-a12b: {input_per_million: "0.30", output_per_million: "0.90"}
+  nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B: {input_per_million: "0.06", output_per_million: "0.24"}
+
+checker: deterministic
+
+a2a:
+  # Stays under Hermes's 300 s MCP tool timeout (agents/hermes/config.yaml).
+  reply_timeout_s: 240
+  reply_grace_s: 3
+
+holds:
+  # The story holds a paid change at 23:30 and approves it at 07:35.
+  expires_hours: 12
+  link_minutes: 30
+  stand_in_hours: 24
+  notify_classes: [change_paid]

@@ -1,0 +1,18 @@
+[project]
+name = "steward-core"
+version = "0.1.0"
+description = "Steward core: request types, rules, checker, canonical hashing, flight log, policy file"
+authors = [
+    { name = "VDT37", email = "dharantejansst@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "pydantic>=2.14",
+    "pyyaml>=6.0.2",
+    "rfc8785>=0.1.4",
+    "tzdata>=2026.5",
+]
+
+[build-system]
+requires = ["uv_build>=0.13.0,<0.14.0"]
+build-backend = "uv_build"

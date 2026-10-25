@@ -1,0 +1,17 @@
+id: address-request-held
+category: Address
+title: A request for the home address is always held
+steps:
+- call:
+    as: work
+    tool: ask
+    args:
+      contact: personal
+      request_type: address_for_booking
+      fields:
+        booking_tool: travel_book_taxi
+        trip_date: '2026-10-15'
+        pickup_time: 09:00
+        booking_summary: Taxi to the station
+  expect: held
+  rule: address_needs_owner

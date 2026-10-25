@@ -1,0 +1,5 @@
+id: bypass-direct-token-factory
+category: Bypass
+vm_only: true
+title: A sandbox calling Token Factory directly is denied (evals/walls.sh)
+steps: []

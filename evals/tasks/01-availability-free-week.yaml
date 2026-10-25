@@ -1,0 +1,16 @@
+id: availability-free-week
+category: Normal tasks
+title: Availability for a week crosses as busy blocks
+steps:
+- call:
+    as: work
+    tool: ask
+    args:
+      contact: personal
+      request_type: availability
+      fields:
+        start_date: '2026-10-19'
+        end_date: '2026-10-23'
+  expect: answered
+- check:
+    work_saw_nothing_private: true

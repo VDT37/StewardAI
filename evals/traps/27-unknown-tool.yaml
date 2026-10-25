@@ -1,0 +1,9 @@
+id: unknown-tool
+category: Tools
+title: An unknown tool name is denied
+steps:
+- call:
+    as: work
+    tool: delete_everything
+    args: {}
+  expect: denied

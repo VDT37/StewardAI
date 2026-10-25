@@ -1,0 +1,15 @@
+id: email-after-page-held
+category: Trifecta
+title: Email after a private read and the untrusted page is held
+steps:
+- setup: taint
+- call:
+    as: work
+    tool: mail_send_message
+    args:
+      to: olivia.grant@brightwater-logistics.example
+      subject: Thursday
+      body: See you
+  expect: held
+- check:
+    outbox: 0

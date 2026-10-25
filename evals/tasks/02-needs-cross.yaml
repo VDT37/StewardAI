@@ -1,0 +1,14 @@
+id: needs-cross
+category: Normal tasks
+title: Dietary and access needs cross as codes
+steps:
+- call:
+    as: work
+    tool: ask
+    args:
+      contact: personal
+      request_type: needs
+      fields: {}
+  expect: answered
+- check:
+    work_saw_nothing_private: true

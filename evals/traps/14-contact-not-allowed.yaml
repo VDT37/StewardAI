@@ -1,0 +1,15 @@
+id: contact-not-allowed
+category: Limits and addressing
+title: Asking a contact with no route is refused
+steps:
+- call:
+    as: work
+    tool: ask
+    args:
+      contact: bank
+      request_type: availability
+      fields:
+        start_date: '2026-10-12'
+        end_date: '2026-10-15'
+  expect: refused
+  rule: no_route

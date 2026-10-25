@@ -5,7 +5,7 @@
 #   openshell profile import -f agents/openshell/profile-steward-work.yaml
 id: steward-work
 display_name: Steward (work agent)
-description: Pass for the work agent, valid only at the Steward stub on the host.
+description: Pass for the work agent, valid only at Steward on the host.
 category: inference
 inference_capable: true
 credentials:
@@ -32,8 +32,8 @@ endpoints:
     protocol: rest
     access: full
     enforcement: enforce
-# Hermes installs under ~/.hermes and its uv-managed Python under ~/.local or ~/.hermes.
-# The image build prints the launcher's interpreter; narrow these globs once confirmed.
+# Only Hermes's own Python may use the pass. Phase 0 found that the process opening
+# connections is ~/.hermes/tools/python-3.14.7+20260901-linux-x64/bin/python3.14 (the launcher in
+# ~/.local/bin is a shell script). The glob keeps working when Hermes updates its Python.
 binaries:
-  - /home/ubuntu/.hermes/**
-  - /home/ubuntu/.local/**
+  - /home/ubuntu/.hermes/tools/python-*/bin/python3*

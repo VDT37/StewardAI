@@ -5,7 +5,7 @@
 #   openshell profile import -f agents/openshell/profile-steward-personal.yaml
 id: steward-personal
 display_name: Steward (personal agent)
-description: Pass for the personal agent, valid only at the Steward stub on the host.
+description: Pass for the personal agent, valid only at Steward on the host.
 category: inference
 inference_capable: true
 credentials:

@@ -1,5 +1,5 @@
 {
-  "description": "Web pages the work agent reaches through Tavily. Steward hosts these itself from Phase 2, so the attack is synthetic and harmless.",
+  "description": "Web pages the work agent reaches through Tavily. Live runs read a public copy of each page on the project's GitHub Pages site; replay and the trap suite use the .example URL below. The attack is synthetic and harmless.",
   "pages": [
     {
       "id": "web-piccadilly-guide",

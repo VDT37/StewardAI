@@ -1,0 +1,11 @@
+id: work-calls-reply
+category: Tools
+title: The work agent cannot call reply
+steps:
+- call:
+    as: work
+    tool: reply
+    args:
+      request_id: r-1
+      fields: {}
+  expect: denied

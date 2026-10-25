@@ -19,6 +19,7 @@ from steward_fixtures.loader import (
     planted_details,
     resolve_anchor,
 )
+from steward_fixtures.world import World, WorldError, home_address, home_address_parts
 
 __all__ = [
     "ANCHOR_ENV",
@@ -28,11 +29,15 @@ __all__ = [
     "CalendarEvent",
     "MailMessage",
     "ScriptedChange",
+    "World",
+    "WorldError",
     "at",
     "calendar_events",
     "events_between",
     "expand_event",
     "find_planted",
+    "home_address",
+    "home_address_parts",
     "load_raw",
     "mail_messages",
     "overnight_changes",

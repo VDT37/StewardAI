@@ -9,14 +9,22 @@ requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.149.0",
     "httpx>=0.28.1",
+    "itsdangerous>=2.2.0",
     "mcp>=2.3",
+    "python-telegram-bot>=22.8",
+    "steward-core",
     "steward-fixtures",
+    "tavily-python>=0.8.5",
     "uvicorn>=0.54.0",
 ]
+
+[project.scripts]
+steward = "steward_gateway.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.13.0,<0.14.0"]
 build-backend = "uv_build"
 
 [tool.uv.sources]
+steward-core = { workspace = true }
 steward-fixtures = { workspace = true }

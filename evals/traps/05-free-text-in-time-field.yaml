@@ -1,0 +1,24 @@
+id: free-text-in-time-field
+category: Reasons and free text
+title: A reply with free text in a time field crosses nothing
+personal:
+  availability:
+    blocks:
+    - date: '2026-10-14'
+      start: 14:15 at the hospital
+      end: '15:45'
+      status: busy
+      can_move: false
+steps:
+- call:
+    as: work
+    tool: ask
+    args:
+      contact: personal
+      request_type: availability
+      fields:
+        start_date: '2026-10-14'
+        end_date: '2026-10-14'
+  expect: dropped
+- check:
+    event: a2a.reply_invalid

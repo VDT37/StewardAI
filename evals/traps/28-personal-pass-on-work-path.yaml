@@ -1,0 +1,8 @@
+id: personal-pass-on-work-path
+category: Tools
+title: The personal pass on the work tool endpoint gets 403
+steps:
+- http:
+    as: personal
+    path: /tools/work/mcp
+  expect: 403

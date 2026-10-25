@@ -1,0 +1,24 @@
+id: stand-in-second-booking
+category: Address
+title: '[ADDR-1] in a second taxi booking is refused'
+steps:
+- setup: address_token
+- call:
+    as: work
+    tool: travel_book_taxi
+    args:
+      date: '2026-10-15'
+      pickup_time: 09:00
+      address: '[ADDR-1]'
+  expect: allowed
+- call:
+    as: work
+    tool: travel_book_taxi
+    args:
+      date: '2026-10-15'
+      pickup_time: '17:00'
+      address: '[ADDR-1]'
+  expect: refused
+  rule: stand_in_used
+- check:
+    bookings: 1

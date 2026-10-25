@@ -8,15 +8,18 @@ dependencies = []
 [tool.uv.workspace]
 members = [
     "apps/gateway",
+    "packages/core",
     "packages/fixtures",
 ]
 
 [dependency-groups]
 dev = [
     "httpx>=0.28.1",
+    "hypothesis>=6.170",
     "mypy>=2.4.0",
     "pytest>=9.1.1",
     "ruff>=0.17.0",
+    "types-pyyaml>=6.0",
 ]
 
 [tool.ruff]
@@ -27,13 +30,19 @@ target-version = "py312"
 select = ["E", "F", "I", "B", "UP"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["steward_gateway", "steward_fixtures"]
+known-first-party = ["steward_core", "steward_gateway", "steward_fixtures"]
 
 [tool.mypy]
 python_version = "3.12"
 strict = true
-files = ["apps/gateway/src", "packages/fixtures/src", "spikes"]
+files = ["apps/gateway/src", "packages/core/src", "packages/fixtures/src", "spikes"]
+
+# tavily-python ships no type information.
+[[tool.mypy.overrides]]
+module = ["tavily", "tavily.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
-testpaths = ["apps", "packages"]
+testpaths = ["apps", "packages", "evals"]
+pythonpath = ["apps/gateway/tests", "evals"]
 addopts = "--import-mode=importlib"

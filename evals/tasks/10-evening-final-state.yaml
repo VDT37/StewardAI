@@ -1,0 +1,14 @@
+id: evening-final-state
+category: Normal tasks
+title: The whole evening ends with the trip moved to the 11:30
+scenario: true
+steps:
+- check:
+    booking:
+    - depart
+    - '11:30'
+    intents: 3
+    todo_version:
+    - todo-expenses
+    - 2
+    work_saw_nothing_private: true

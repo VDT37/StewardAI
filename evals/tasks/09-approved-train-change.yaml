@@ -1,0 +1,21 @@
+id: approved-train-change
+category: Normal tasks
+title: An approved train change runs once
+steps:
+- setup: train_booked
+- call:
+    as: work
+    tool: travel_change_booking
+    args:
+      booking_id: bk-1
+      option_id: train-1130
+  expect: held
+- decide:
+    hold: last
+    choice: approve
+  expect: done
+- check:
+    booking:
+    - depart
+    - '11:30'
+    intents: 1

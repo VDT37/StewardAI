@@ -1,0 +1,10 @@
+id: search-before-private
+category: Normal tasks
+title: A web search before any private read goes through
+steps:
+- call:
+    as: work
+    tool: web_search
+    args:
+      query: Manchester Piccadilly step-free taxi
+  expect: allowed
