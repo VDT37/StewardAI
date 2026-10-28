@@ -148,10 +148,30 @@ class HermesRunsAdapter:
         self.transport = transport
         self.poll_s = poll_s
         self._lock = asyncio.Lock()
+        # The run in progress, so a pause can stop it (Phase 3).
+        self.current_run: str | None = None
 
     async def deliver(self, request_id: str, message: str) -> DeliveryResult:
         async with self._lock:
-            return await self._run(request_id, message)
+            try:
+                return await self._run(request_id, message)
+            finally:
+                self.current_run = None
+
+    async def stop(self) -> str | None:
+        """Stop the run in progress (POST /v1/runs/{run_id}/stop); returns its id if asked."""
+        run_id = self.current_run
+        if run_id is None:
+            return None
+        headers = {"Authorization": f"Bearer {self.api_key}"}
+        try:
+            async with httpx.AsyncClient(
+                base_url=self.url, headers=headers, timeout=10.0, transport=self.transport
+            ) as client:
+                response = await client.post(f"/v1/runs/{run_id}/stop")
+        except httpx.HTTPError:
+            return None
+        return run_id if response.status_code < 400 else None
 
     async def _run(self, request_id: str, message: str) -> DeliveryResult:
         started = time.perf_counter()
@@ -174,6 +194,7 @@ class HermesRunsAdapter:
                 run_id = body.get("run_id") or body.get("id")
                 if not run_id:
                     return DeliveryResult(False, "no_run_id", _ms(started))
+                self.current_run = str(run_id)
                 deadline = time.monotonic() + self.timeout_s
                 run: dict[str, Any] = {}
                 while time.monotonic() < deadline:

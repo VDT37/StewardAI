@@ -12,11 +12,19 @@ total for spending, the current version for a versioned write. A call is refused
 owner (and returns at once with a hold id, P2-D9 A) or allowed. Each call the agent makes logs
 exactly one decision event carrying {"call": {tool, arguments}}; an allowed call also logs a
 tool.result when it returns. Replay re-issues the calls from those events.
+
+Phase 3: mail from a tool with `screen: mail` is checked for phishing in code
+(steward_core.phishing). A suspected message reaches the agent with its links withheld and its
+hidden text removed (mail.screened keeps the original links for the owner), and a later call
+that tries to open one of those links is refused (rule phishing_link). The owner can also turn a
+single tool off for one agent: it leaves the agent's tool list and is refused at call time,
+because an agent may keep an old tool list for its whole session.
 """
 
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from collections.abc import Callable, Mapping
 from contextlib import AsyncExitStack
@@ -43,6 +51,7 @@ from steward_core.address import COVERED_TOOL, StandIn, find_stand_ins, swap_sta
 from steward_core.canonical import tool_fingerprint
 from steward_core.checker import Decision
 from steward_core.clock import Clock, iso_ms, parse_iso
+from steward_core.phishing import Screen, domain_of, screen_message, withhold
 from steward_core.policy import Policy, ToolRule, exposed_name
 from steward_core.rules import CallFacts, CallVerdict, FlagBook, decide
 from steward_core.store import Hold, Store
@@ -204,6 +213,15 @@ class ToolDoor:
             agent: self._server(agent) for agent in policy.agents
         }
         holds.executors["tool"] = self.execute_hold
+        # Phase 3: tools the owner turned off, per agent (exposed names).
+        self.disabled: dict[str, set[str]] = {agent: set() for agent in policy.agents}
+        # Links Steward withheld from each agent (url -> message id), the hosts they point to,
+        # and the senders of suspected phishing (domain -> message id).
+        self.withheld: dict[str, dict[str, str]] = {agent: {} for agent in policy.agents}
+        self.withheld_hosts: dict[str, dict[str, str]] = {agent: {} for agent in policy.agents}
+        self.suspect_senders: dict[str, str] = {}
+        # Messages the owner marked as not phishing: their links are not withheld again.
+        self.cleared_mail: set[str] = set()
 
     # Tool lists -------------------------------------------------------------------------------
 
@@ -235,6 +253,8 @@ class ToolDoor:
         tools = []
         for name, tool_id in self.exposures[agent].items():
             entry = self.catalogue.tools.get(tool_id)
+            if name in self.disabled.get(agent, set()):
+                continue
             if entry is not None and entry.enabled:
                 tools.append(
                     Tool(
@@ -286,6 +306,8 @@ class ToolDoor:
         reason = None
         if tool_id is None:
             reason = "not on this agent's pass"
+        elif name in self.disabled.get(agent, set()):
+            reason = "turned off by the owner"
         elif entry is None:
             reason = "upstream tool not found"
         elif not entry.enabled:
@@ -307,8 +329,17 @@ class ToolDoor:
         active = self.a2a.active_request(agent)
         if active:
             payload["a2a_request"] = active
+        withheld = self._withheld_link(agent, arguments) if rule.is_egress else None
         if problem is not None:
             verdict = CallVerdict(Decision.REFUSE, "invalid_call", problem, ("invalid_call",))
+        elif withheld is not None:
+            verdict = CallVerdict(
+                Decision.REFUSE,
+                "phishing_link",
+                f"the link comes from a suspected phishing email ({withheld}); Steward withheld "
+                "it, so it is not opened",
+                ("phishing_link",),
+            )
         else:
             verdict = decide(facts)
         if verdict.decision is Decision.REFUSE:
@@ -457,6 +488,12 @@ class ToolDoor:
                 details["current_version"] = current_version
         if rule.is_egress:
             details["flags"] = flags.as_dict()
+        if rule.tool_class == "send":
+            phished = self.suspect_senders.get(domain_of(str(arguments.get("to") or "")))
+            if phished:
+                details["warning"] = (
+                    f"the recipient's domain sent a suspected phishing email ({phished})"
+                )
         facts = CallFacts(
             agent=agent,
             tool_id=tool_id,
@@ -528,6 +565,8 @@ class ToolDoor:
             state = "failed"
         result = self._scrub(agent, result)
         now = self.clock.now()
+        if rule.screen == "mail" and not result.is_error:
+            result = self._screen(agent, tool_id, result, now)
         flags_set = self._set_flags(agent, tool_id, rule, result, now)
         booking = self._bookkeep(agent, tool_id, arguments, result)
         payload: dict[str, Any] = {
@@ -587,6 +626,71 @@ class ToolDoor:
         }
         self.holds.store.finish_intent(key, state, data, iso_ms(self.clock.now()))
         return state, data
+
+    # Phishing screen (Phase 3) -----------------------------------------------------------------
+
+    def _screen(
+        self, agent: str, tool_id: str, result: CallToolResult, now: datetime
+    ) -> CallToolResult:
+        """Check a read message for phishing; a suspected one goes back with its links withheld
+        and hidden text removed, and mail.screened keeps the original for the owner."""
+        message = result.structured_content
+        if not isinstance(message, dict) or "from" not in message:
+            return result
+        message_id = str(message.get("id") or "")
+        screen: Screen = screen_message(message, self.policy.trusted_mail_domains)
+        if not screen.suspected:
+            return result
+        cleared = message_id in self.cleared_mail
+        self.recorder.record(
+            "tool",
+            "mail.screened",
+            {
+                "message_id": message_id,
+                "tool_id": tool_id,
+                "subject": str(message.get("subject") or "")[:200],
+                "received": message.get("received"),
+                "released_by_owner": cleared,
+                **screen.as_dict(),
+            },
+            agent=agent,
+            at=now,
+        )
+        if cleared:
+            return result
+        for link in screen.links:
+            self.withheld[agent][link.url] = message_id
+            if link.host:
+                self.withheld_hosts[agent][link.host] = message_id
+        if screen.sender_domain:
+            self.suspect_senders.setdefault(screen.sender_domain, message_id)
+        safe = withhold(message, screen)
+        text = (
+            "Steward suspects this message is phishing; its links are withheld and hidden text "
+            f"was removed. {safe['steward_screen']['advice']}\n"
+            + json.dumps(safe, ensure_ascii=False)
+        )
+        return CallToolResult(
+            content=[TextContent(type="text", text=text)],
+            structured_content=safe,
+            is_error=False,
+        )
+
+    def _withheld_link(self, agent: str, arguments: dict[str, Any]) -> str | None:
+        """The message a withheld link (or its host) in these arguments came from, if any."""
+        urls = self.withheld.get(agent, {})
+        hosts = self.withheld_hosts.get(agent, {})
+        if not urls and not hosts:
+            return None
+        for value in _string_values(arguments):
+            lowered = value.lower()
+            for url, message_id in urls.items():
+                if url.lower() in lowered:
+                    return message_id
+            for host, message_id in hosts.items():
+                if host in lowered:
+                    return message_id
+        return None
 
     # Stand-ins, scrubbing and flags -----------------------------------------------------------
 
@@ -695,6 +799,16 @@ def _empty_facts(
     agent: str, tool_id: str, rule: ToolRule, arguments: dict[str, Any], now: datetime
 ) -> CallFacts:
     return CallFacts(agent=agent, tool_id=tool_id, rule=rule, arguments=arguments, now=now)
+
+
+def _string_values(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [s for item in value.values() for s in _string_values(item)]
+    if isinstance(value, list):
+        return [s for item in value for s in _string_values(item)]
+    return []
 
 
 def _content_text(result: CallToolResult) -> str:

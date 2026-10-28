@@ -33,6 +33,8 @@ CHOICES: dict[str, list[dict[str, str]]] = {
     ],
     "address": [{"id": "taxi_only", "label": "Taxi booking only"}, {"id": "deny", "label": "Deny"}],
     "ask": [{"id": "approve", "label": "Send this ask"}, {"id": "deny", "label": "Deny"}],
+    # Phase 3: an agent the watcher paused at a hard limit.
+    "pause": [{"id": "resume", "label": "Resume"}, {"id": "deny", "label": "Keep paused"}],
 }
 DENY = frozenset({"deny"})
 # Hold states: pending -> approved -> done | failed | unknown, or pending -> denied | expired.

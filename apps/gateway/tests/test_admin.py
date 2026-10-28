@@ -17,13 +17,14 @@ def test_agent_detail_shows_tools_pins_and_routes(tmp_path: Path) -> None:
     with http_app(tmp_path) as (client, _, _):
         work = client.get("/admin/agents/work", headers=OWNER_H).json()
         assert client.get("/admin/agents/ghost", headers=OWNER_H).status_code == 404
-    assert work["pass"] == "active" and work["model"] == "nvidia/nemotron-3-super-120b-a12b"
+    assert work["pass"] == "active" and work["model"] == "nvidia/Nemotron-3.5-Super-VL"
     states = {t["name"]: t["state"] for t in work["tool_list"]}
     assert states == {
         "calendar_list_events": "pinned",
         "mail_list_messages": "pinned",
         "mail_read_message": "pinned",
         "mail_send_message": "pinned",
+        "mail_report_message": "pinned",
         "todo_list_items": "pinned",
         "todo_update_item": "pinned",
         "todo_delete_item": "pinned",
@@ -78,9 +79,9 @@ def test_session_tools_and_pending(tmp_path: Path) -> None:
         new = client.post("/admin/session", json={"label": "rehearsal"}, headers=OWNER_H).json()
         assert new["session_id"] != before and ctx.recorder.session_id == new["session_id"]
         tools = client.get("/admin/tools", headers=OWNER_H).json()
-        assert {t["state"] for t in tools} == {"pinned"} and len(tools) == 20
+        assert {t["state"] for t in tools} == {"pinned"} and len(tools) == 21
         refreshed = client.post("/admin/tools/refresh", headers=OWNER_H).json()
-        assert len(refreshed) == 20
+        assert len(refreshed) == 21
         repin = client.post("/admin/tools/shared_todo.list_items/repin", headers=OWNER_H)
         assert repin.json()["state"] == "pinned"
         assert client.post("/admin/tools/nope.x/repin", headers=OWNER_H).status_code == 404

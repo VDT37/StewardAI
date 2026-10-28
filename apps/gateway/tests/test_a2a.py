@@ -109,7 +109,8 @@ def test_eleventh_ask_of_the_day_is_held(tmp_path: Path) -> None:
         return None
 
     async def scenario() -> tuple[list[str], AdminContext]:
-        policy = without_burst(fast_policy(reply_grace_s=0))
+        # The same ask eleven times is also a runaway loop; the watcher has its own tests.
+        policy = without_burst(fast_policy(reply_grace_s=0)).model_copy(update={"watcher": None})
         async with running(tmp_path, quiet, policy=policy) as (_, ctx, _):
             statuses = []
             for _ in range(11):

@@ -46,6 +46,8 @@ TOOLS = [
 ]
 TOOL_RESULT = {"busy": [{"date": "2026-10-14", "start": "14:00", "end": "16:00"}]}
 REASONING_KEYS = ("reasoning_content", "reasoning")
+# Extra request fields for every call (Phase 3: --reasoning-effort).
+EXTRA_BODY: dict[str, Any] = {}
 
 
 @dataclass
@@ -61,6 +63,9 @@ class Result:
         if isinstance(usage, dict):
             self.prompt_tokens += int(usage.get("prompt_tokens") or 0)
             self.completion_tokens += int(usage.get("completion_tokens") or 0)
+            details = usage.get("completion_tokens_details") or {}
+            if isinstance(details, dict) and details.get("reasoning_tokens"):
+                self.notes.append(f"reasoning_tokens: {details['reasoning_tokens']}")
 
 
 @dataclass
@@ -88,6 +93,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-tokens", type=int, default=1024)
     parser.add_argument("--price-in", type=float, help="USD per million input tokens")
     parser.add_argument("--price-out", type=float, help="USD per million output tokens")
+    parser.add_argument(
+        "--reasoning-effort",
+        help="sent as reasoning_effort on every call (none, minimal, low, medium, high, ...)",
+    )
     return parser.parse_args()
 
 
@@ -151,6 +160,7 @@ def check_plain(client: httpx.Client, model: str, max_tokens: int, result: Resul
                 {"role": "user", "content": "Reply with one short sentence confirming you work."}
             ],
             "max_tokens": max_tokens,
+            **EXTRA_BODY,
         },
     )
     if response.status_code != 200:
@@ -184,6 +194,7 @@ def check_stream(client: httpx.Client, model: str, max_tokens: int, result: Resu
         "model": model,
         "messages": [{"role": "user", "content": "Count from 1 to 5, separated by commas."}],
         "max_tokens": max_tokens,
+        **EXTRA_BODY,
         "stream": True,
         "stream_options": {"include_usage": True},
     }
@@ -237,6 +248,7 @@ def check_tools(client: httpx.Client, model: str, max_tokens: int, result: Resul
             "tools": TOOLS,
             "tool_choice": "auto",
             "max_tokens": max_tokens,
+            **EXTRA_BODY,
         },
     )
     if turn1.status_code != 200:
@@ -267,7 +279,13 @@ def check_tools(client: httpx.Client, model: str, max_tokens: int, result: Resul
     ]
     turn2 = client.post(
         "/chat/completions",
-        json={"model": model, "messages": messages, "tools": TOOLS, "max_tokens": max_tokens},
+        json={
+            "model": model,
+            "messages": messages,
+            "tools": TOOLS,
+            "max_tokens": max_tokens,
+            **EXTRA_BODY,
+        },
     )
     if turn2.status_code != 200:
         result.notes.append(f"turn 2 HTTP {turn2.status_code}: {short(turn2.text)}")
@@ -291,6 +309,7 @@ def check_stream_tools(client: httpx.Client, model: str, max_tokens: int, result
         "tools": TOOLS,
         "tool_choice": "auto",
         "max_tokens": max_tokens,
+        **EXTRA_BODY,
         "stream": True,
         "stream_options": {"include_usage": True},
     }
@@ -340,6 +359,8 @@ CHECKS: list[tuple[str, Callable[[httpx.Client, str, int, Result], None]]] = [
 
 def main() -> int:
     args = parse_args()
+    if args.reasoning_effort:
+        EXTRA_BODY["reasoning_effort"] = args.reasoning_effort
     token = os.environ.get(args.key_env, "")
     if not token:
         print(f"{args.key_env} is not set", file=sys.stderr)

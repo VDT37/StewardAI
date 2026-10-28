@@ -38,11 +38,12 @@ from steward_gateway.model_door import UPSTREAM_TIMEOUT, ModelDoor
 from steward_gateway.recorder import Recorder
 from steward_gateway.runtime import Runtime
 from steward_gateway.settings import PassBook, Settings
+from steward_gateway.supervisor import Briefing, Job, Scheduler, Watcher, backup_job
 from steward_gateway.telegram_cards import TelegramCards
 from steward_gateway.tool_door import Catalogue, Gate, PassGate, ToolDoor
 from steward_gateway.web_tools import make_backend, web_server
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 # The MCP apps answer 421 to any other Host header. Sandboxes call host.openshell.internal:8000.
 ALLOWED_HOSTS = [
     "host.openshell.internal",
@@ -88,8 +89,11 @@ def create_app(
     gate: Gate | None = None,
     session_id: str | None = None,
     anchor_value: str | None = None,
+    run_scheduler: bool = False,
 ) -> FastAPI:
-    """Build Steward. The keyword arguments replace the real parts in tests and replay."""
+    """Build Steward. The keyword arguments replace the real parts in tests and replay.
+    run_scheduler starts the scheduler's loop (the real service); tests and replay run jobs
+    themselves."""
     cfg = settings or Settings.from_env()
     policy = cfg.policy
     steward_clock = clock or StewardClock()
@@ -202,6 +206,25 @@ def create_app(
         holds.listeners.append(telegram.on_hold)
         runtime.extras["telegram"] = telegram
 
+    # Phase 3: the supervisor. Each part is on only when the policy has its section, so a
+    # recording made under an older policy replays exactly as it ran.
+    holds.executors["pause"] = runtime.resume_from_card
+    if policy.watcher is not None:
+        runtime.watcher = Watcher(runtime)
+    scheduler = Scheduler(runtime)
+    runtime.scheduler = scheduler
+    if policy.brief is not None and policy.helper is not None:
+        runtime.briefing = Briefing(runtime)
+        briefing = runtime.briefing
+
+        async def brief_job(due: datetime) -> None:
+            await briefing.run(due)
+
+        scheduler.add(Job("brief", policy.brief.at, brief_job))
+    if policy.backup is not None:
+        scheduler.add(Job("backup", policy.backup.at, backup_job(runtime), live_only=True))
+    runtime.load_controls()
+
     security = TransportSecuritySettings(
         enable_dns_rebinding_protection=True,
         allowed_hosts=ALLOWED_HOSTS,
@@ -242,6 +265,13 @@ def create_app(
             if telegram is not None:
                 await telegram.start()
                 stack.push_async_callback(telegram.stop)
+            watcher = runtime.watcher
+            if watcher is not None:
+                db.subscribe(watcher.on_event)
+                stack.callback(db.unsubscribe, watcher.on_event)
+            if run_scheduler:
+                scheduler.start()
+                stack.push_async_callback(scheduler.stop)
             try:
                 yield
             finally:
@@ -276,5 +306,5 @@ def __getattr__(name: str) -> Any:
     # `uvicorn steward_gateway.app:app` builds the app on first access, so importing the module
     # (tests, tooling) does not need the settings.
     if name == "app":
-        return create_app()
+        return create_app(run_scheduler=True)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

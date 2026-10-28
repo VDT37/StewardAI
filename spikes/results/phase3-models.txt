@@ -1,0 +1,32 @@
+Phase 3 Part A, Wed 28 Oct 2026, on the VM (eu-north-1), straight to Token Factory with
+spikes/token_factory_check.py. Token Factory removes nvidia/nemotron-3-super-120b-a12b and
+nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B from Serverless on 9 Nov 2026
+(https://docs.tokenfactory.nebius.com/model-deprecations-november-2026).
+
+nvidia/Nemotron-3.5-Super-VL  context 1048576  price in/out per M: $0.30 / $0.90
+  plain         PASS    818 ms  prompt=25  completion=131  reasoning_tokens 123, field reasoning_content
+  stream        PASS    647 ms  prompt=29  completion=85
+  tools         PASS   1575 ms  prompt=859 completion=355  turn 1 tool_calls get_availability, turn 2 stop
+  stream+tools  PASS    475 ms  prompt=373 completion=105  10 tool-call chunks
+  ALL PASS
+
+nvidia/Nemotron-3_5-Lightning  context 1048576  price in/out per M: $0.06 / $0.24
+  plain         PASS   1277 ms  prompt=25  completion=332  reasoning_tokens 322, fields reasoning and reasoning_content
+  stream        PASS   1296 ms  prompt=29  completion=357
+  tools         PASS    746 ms  prompt=1117 completion=124
+  stream+tools  PASS    341 ms  prompt=502 completion=55
+  ALL PASS
+
+nvidia/Nemotron-3_5-Lightning with --reasoning-effort none
+  plain         PASS    235 ms  prompt=25  completion=7   (no reasoning tokens)
+  stream        PASS    172 ms  prompt=29  completion=14
+  tools         PASS   1041 ms  prompt=1117 completion=189
+  stream+tools  PASS    342 ms  prompt=502 completion=55
+  ALL PASS
+
+nvidia/Nemotron-3_5-Lightning with --reasoning-effort low
+  plain         PASS   1266 ms  completion=307 (reasoning_tokens 298); tools turns 41 and 42 reasoning tokens
+  ALL PASS
+
+Decision: work agent -> Nemotron-3.5-Super-VL, personal agent -> Nemotron-3_5-Lightning, the morning
+brief writer -> Nemotron-3_5-Lightning with reasoning_effort "none".
