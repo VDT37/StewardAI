@@ -335,6 +335,10 @@ async def replayed(
                 gate.release(kind, str(payload[GATED[kind]]), payload)
             elif kind in DELIVERIES:
                 gate.release("delivery", str(payload.get(DELIVERIES[kind])), payload)
+            elif kind == "scenario.beat":
+                # Narrative, not compared: the console shows the story's beats, and a held
+                # call's card says which beat started the agent's run.
+                runtime.recorder.record("system", kind, payload, at=parse_iso(str(event["ts"])))
             elif kind == "a2a.timeout":
                 runtime.a2a.force_timeout(str(payload["request_id"]))
             elif kind == "hold.expired":

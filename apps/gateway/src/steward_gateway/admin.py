@@ -29,6 +29,7 @@ from pydantic import BaseModel
 from steward_core.clock import london_day, parse_iso
 from steward_core.store import Event, Hold
 from steward_gateway.holds import HoldError, short_fingerprint
+from steward_gateway.prompted import prompted_by
 from steward_gateway.runtime import AdminContext, Runtime
 
 KEEPALIVE_S = 15.0
@@ -93,11 +94,12 @@ def event_json(event: Event) -> dict[str, Any]:
     return event.as_dict()
 
 
-def hold_json(hold: Hold, policy_class: str | None) -> dict[str, Any]:
+def hold_json(hold: Hold, policy_class: str | None, prompted: str | None = None) -> dict[str, Any]:
     return {
         **hold.as_dict(),
         "fingerprint_short": short_fingerprint(hold.fingerprint),
         "tool_class": policy_class,
+        "prompted_by": prompted,
     }
 
 
@@ -383,14 +385,19 @@ def admin_router(ctx: Runtime) -> APIRouter:
         else:
             ctx.holds.pending()  # works out expiry first
             found = ctx.store.holds(state=None if state == "all" else state, limit=limit)
-        return [hold_json(h, tool_class(h)) for h in found[:limit]]
+        # What started the agent's run, for the cards still waiting (the decided list does
+        # not show it).
+        return [
+            hold_json(h, tool_class(h), prompted_by(ctx, h) if h.state == "pending" else None)
+            for h in found[:limit]
+        ]
 
     @router.get("/holds/{hold_id}")
     async def hold_detail(hold_id: str) -> dict[str, Any]:
         hold = ctx.holds.get(hold_id)
         if hold is None:
             raise HTTPException(404, "no such hold")
-        return hold_json(hold, tool_class(hold))
+        return hold_json(hold, tool_class(hold), prompted_by(ctx, hold))
 
     @router.post("/holds/{hold_id}/decide")
     async def decide(hold_id: str, body: DecideIn) -> dict[str, Any]:

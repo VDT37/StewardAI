@@ -115,6 +115,8 @@ export type Hold = {
   result: Record<string, unknown> | null
   decided: string | null
   tool_class: string | null
+  // What started the agent's run, from Steward's records (waiting holds only).
+  prompted_by?: string | null
 }
 
 export type Exchange = {

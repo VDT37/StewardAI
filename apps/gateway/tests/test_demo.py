@@ -88,6 +88,11 @@ def test_visitor_reads_the_replayed_evening_and_cannot_change_it(bundle: Path) -
         assert client.get("/r/scripted/admin/status").json()["head"]["seq"] == head
         brief = client.get("/r/scripted/admin/brief").json()
         assert brief["question"]["kind"] == "change_paid"
+        # The replayed Steward has the story's beats, so each waiting card says what started
+        # the agent's run.
+        waiting = client.get("/r/scripted/admin/holds").json()
+        assert waiting and all(h["prompted_by"] for h in waiting)
+        assert not any(h["prompted_by"].startswith("Nothing Steward relayed") for h in waiting)
 
         # Owner actions, the model door and the tool door are out of reach.
         hold = client.get("/r/scripted/admin/holds").json()[0]

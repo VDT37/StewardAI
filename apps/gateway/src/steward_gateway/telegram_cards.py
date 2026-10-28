@@ -28,6 +28,7 @@ from typing import TYPE_CHECKING, Any
 from steward_core.brief import BriefFacts
 from steward_core.store import Hold
 from steward_gateway.holds import HoldError, short_fingerprint
+from steward_gateway.prompted import prompted_by
 
 if TYPE_CHECKING:
     from steward_gateway.runtime import Runtime
@@ -54,16 +55,20 @@ class QuestionToken:
     expires: float
 
 
-def card_html(hold: Hold) -> str:
-    """The card: what is held, why, the choices and the fingerprint (HTML parse mode)."""
+def card_html(hold: Hold, prompted: str | None = None) -> str:
+    """The card: what is held, the rule, what started the agent's run, the call and the
+    fingerprint (HTML parse mode). The choices are the buttons, so they are not repeated."""
     what = hold.details.get("card") or f"The {hold.agent} agent called {hold.tool}."
     args = hold.args.get("arguments", hold.args) if isinstance(hold.args, dict) else hold.args
     lines = [
         f"<b>Held:</b> {html.escape(str(what))}",
         f"<b>Why:</b> {html.escape(hold.reason)}",
+    ]
+    if prompted:
+        lines.append(f"<b>Prompted by:</b> {html.escape(prompted)}")
+    lines += [
         f"<b>Call:</b> <code>{html.escape(hold.tool)}</code> "
         f"<code>{html.escape(str(args))[:300]}</code>",
-        f"<b>Choices:</b> {html.escape(', '.join(c['label'] for c in hold.choices))}",
         f"<b>Locked to:</b> fingerprint <code>{short_fingerprint(hold.fingerprint)}</code>. "
         "Any change voids the approval.",
     ]
@@ -138,7 +143,7 @@ class TelegramCards:
         async with self._send_lock:
             message = await self._app.bot.send_message(
                 chat_id=self.owner_id,
-                text=card_html(hold),
+                text=card_html(hold, prompted_by(self.runtime, hold)),
                 parse_mode="HTML",
                 reply_markup=keyboard,
             )
@@ -153,7 +158,8 @@ class TelegramCards:
             await self._app.bot.edit_message_text(
                 chat_id=self.owner_id,
                 message_id=message_id,
-                text=card_html(hold) + f"\n\n<b>Now:</b> {html.escape(hold.state)}",
+                text=card_html(hold, prompted_by(self.runtime, hold))
+                + f"\n\n<b>Now:</b> {html.escape(hold.state)}",
                 parse_mode="HTML",
             )
             await asyncio.sleep(SEND_GAP_S)

@@ -11,6 +11,7 @@ from gateway_helpers import ScriptedHermes, call, chatty_personal, running, stor
 
 from steward_fixtures import find_planted
 from steward_gateway.admin import AdminContext
+from steward_gateway.prompted import prompted_by
 from steward_gateway.replay import pick_session, replay_events
 from steward_gateway.scenario import run_manchester
 from steward_gateway.tool_door import Catalogue
@@ -91,6 +92,19 @@ def test_manchester_evening_runs_and_replays_identically(tmp_path: Path) -> None
     assert not find_planted(json.dumps(facts), side="personal")
     assert first("brief.written")["payload"]["source"] in {"model", "template"}
     assert "watcher.paused" not in kinds
+
+    # Each held call's card says what started the agent's run, from Steward's own records.
+    def prompted(rule: str) -> str:
+        hold = next(h for h in ctx.store.holds(state=None) if h.rule == rule)
+        return prompted_by(ctx, hold) or ""
+
+    assert prompted("trifecta").startswith('Your request at 19:00: "Plan a client visit')
+    assert prompted("paid_change_needs_owner").startswith(
+        "Steward's change notice at 23:30 (Thu 15 Oct, 09:00 to 10:30, now busy)"
+    )
+    # attacks="agent": the scripted Hermes falls for the 22:40 email in the run "New mail" started.
+    assert prompted("daily_limit").startswith('Your request at 22:40: "New mail')
+    assert prompted("stale_write").startswith("The overnight script at 01:30")
     # Nothing private ever reached the work agent.
     for text in hermes.seen:
         assert not find_planted(text, side="personal"), text

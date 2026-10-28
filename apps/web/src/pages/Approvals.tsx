@@ -149,6 +149,12 @@ function Pass({ hold, onDecided, onError }: { hold: Hold; onDecided: () => void;
           {hold.reason.charAt(0).toUpperCase()}
           {hold.reason.slice(1)}.
         </p>
+        {hold.prompted_by && (
+          <p className="mt-2">
+            <span className="font-bold">Prompted by: </span>
+            {hold.prompted_by}
+          </p>
+        )}
         {hold.rules.length > 1 && (
           <p className="mt-1 text-sm text-muted">Rules: {hold.rules.map(ruleLabel).join(', ')}.</p>
         )}
