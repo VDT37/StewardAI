@@ -2,6 +2,7 @@
 import { useState, type ReactNode } from 'react'
 import type { LogEvent } from './api'
 import { describe, ruleLabel, when, type Outcome } from './format'
+import { DEMO_REASON, useMode } from './mode'
 
 export function Panel({
   title,
@@ -86,17 +87,23 @@ export function Fingerprint({ value, big = false }: { value: string; big?: boole
   )
 }
 
+// owner marks an action only the owner may take: in the public demo it is shown but disabled,
+// with the reason as its tooltip.
 export function Button({
   children,
   onClick,
   kind = 'plain',
   disabled = false,
+  owner = false,
 }: {
   children: ReactNode
   onClick: () => void
   kind?: 'primary' | 'plain' | 'danger'
   disabled?: boolean
+  owner?: boolean
 }) {
+  const { demo } = useMode()
+  const locked = owner && demo
   const styles = {
     primary: 'bg-ink text-card hover:opacity-90',
     plain: 'border border-line bg-card hover:bg-quiet-soft',
@@ -106,11 +113,33 @@ export function Button({
     <button
       type="button"
       onClick={onClick}
-      disabled={disabled}
-      className={`rounded-lg px-4 py-2 font-bold disabled:opacity-50 ${styles[kind]}`}
+      disabled={disabled || locked}
+      title={locked ? DEMO_REASON : undefined}
+      className={`rounded-lg px-4 py-2 font-bold disabled:cursor-not-allowed disabled:opacity-50 ${styles[kind]}`}
     >
       {children}
     </button>
+  )
+}
+
+// In the demo, a one-line reason beside a group of owner buttons.
+export function OwnerOnly() {
+  const { demo } = useMode()
+  if (!demo) return null
+  return <p className="text-sm text-muted">{DEMO_REASON}</p>
+}
+
+// Which model does what: from the recording in the demo, from the policy for the owner.
+export function ModelsStrip({ models }: { models: [string, string][] }) {
+  return (
+    <dl className="flex flex-wrap gap-x-6 gap-y-1 text-sm">
+      {models.map(([role, model]) => (
+        <div key={role} className="flex gap-1.5">
+          <dt className="text-muted">{role}:</dt>
+          <dd className="font-bold">{model}</dd>
+        </div>
+      ))}
+    </dl>
   )
 }
 

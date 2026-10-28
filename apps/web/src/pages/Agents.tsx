@@ -1,11 +1,18 @@
-// The agents: their passes, spend against budget, trifecta flags and tools.
+// The agents: their passes (pause, resume, revoke), spend against budget, trifecta flags and
+// tools (each can be turned off for one agent).
 import { useCallback } from 'react'
 import { api, type AgentDetail, type AgentSummary, type Flags } from '../api'
-import { who } from '../format'
+import { modelName, who } from '../format'
 import { useLoad, type OnError } from '../hooks'
-import { Actor, Button, EventLine, Loading, PageTitle, Panel, Spend } from '../ui'
+import { Actor, Button, EventLine, Loading, OwnerOnly, PageTitle, Panel, Spend } from '../ui'
 
 const loadAgents = () => api.agents()
+
+const PASS_WORD: Record<string, string> = {
+  active: 'Pass active',
+  suspended: 'Paused',
+  revoked: 'Revoked',
+}
 
 const CLASS_WORD: Record<string, string> = {
   read: 'Reads',
@@ -59,10 +66,13 @@ export function AgentsPage({ onError }: { onError: OnError }) {
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <Actor name={who(agent.id)} />
                 <span className={agent.pass === 'active' ? 'text-personal' : 'font-bold text-refused'}>
-                  {agent.pass === 'active' ? 'Pass active' : 'Pass suspended'}
+                  {PASS_WORD[agent.pass]}
                 </span>
               </div>
-              <p className="mt-2 text-muted">{agent.model.split('/').pop()}</p>
+              <p className="mt-2 text-muted">{modelName(agent.model)}</p>
+              {agent.tools_off.length > 0 && (
+                <p className="mt-1 text-sm text-held">Turned off: {agent.tools_off.join(', ')}</p>
+              )}
               <div className="mt-4">
                 <Spend spent={agent.spend_today_usd} budget={agent.budget_usd_per_day} />
               </div>
@@ -88,23 +98,44 @@ export function AgentPage({ id, onError }: { id: string; onError: OnError }) {
   const [agent, reload] = useLoad<AgentDetail>(load, onError)
   if (!agent) return <Loading />
   const toggle = () => (agent.pass === 'active' ? api.suspend(id) : api.resume(id)).then(reload, onError)
+  const revoke = () => {
+    if (window.confirm(`Revoke the ${id} agent's pass? Only a new pass lifts it.`)) {
+      api.revoke(id).then(reload, onError)
+    }
+  }
   const clear = () => api.clearFlags(id).then(reload, onError)
+  const switchTool = (name: string, on: boolean) => api.tool(id, name, on).then(reload, onError)
   return (
     <div className="space-y-4">
-      <PageTitle title={who(agent.id)} lead={agent.model} />
+      <PageTitle title={who(agent.id)} lead={`${modelName(agent.model)} (${agent.model})`} />
       <Panel
         title="Pass"
         aside={
-          <Button kind={agent.pass === 'active' ? 'danger' : 'primary'} onClick={toggle}>
-            {agent.pass === 'active' ? 'Suspend pass' : 'Resume pass'}
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              kind={agent.pass === 'active' ? 'danger' : 'primary'}
+              owner
+              disabled={agent.pass === 'revoked'}
+              onClick={toggle}
+            >
+              {agent.pass === 'active' ? 'Pause' : 'Resume'}
+            </Button>
+            {agent.pass !== 'revoked' && (
+              <Button kind="danger" owner onClick={revoke}>
+                Revoke
+              </Button>
+            )}
+          </div>
         }
       >
         <p>
           {agent.pass === 'active'
-            ? 'Active. Suspending it stops every model, tool and agent call at once; the Nebius key is not touched.'
-            : 'Suspended. Every call from this agent is turned away until you resume it.'}
+            ? 'Active. Pausing stops every model, tool and agent call at once and stops a run in progress; it survives a restart, and the Nebius key is not touched.'
+            : agent.pass === 'suspended'
+              ? 'Paused. Every call from this agent is turned away until you resume it.'
+              : 'Revoked. Every call is turned away, and only a new pass lifts it: put a new pass for this agent in the .env file and in its OpenShell provider, then restart Steward.'}
         </p>
+        <OwnerOnly />
         <div className="mt-4 max-w-xl">
           <Spend spent={agent.spend_today_usd} budget={agent.budget_usd_per_day} />
         </div>
@@ -115,7 +146,7 @@ export function AgentPage({ id, onError }: { id: string; onError: OnError }) {
       <Panel
         title="Trifecta flags"
         aside={
-          <Button onClick={clear} disabled={!agent.flags.private_read.length && !agent.flags.untrusted_seen.length}>
+          <Button owner onClick={clear} disabled={!agent.flags.private_read.length && !agent.flags.untrusted_seen.length}>
             Clear flags
           </Button>
         }
@@ -145,6 +176,8 @@ export function AgentPage({ id, onError }: { id: string; onError: OnError }) {
                   <td className="py-2 pr-4">
                     {tool.state === 'mismatch' ? (
                       <span className="font-bold text-refused">Changed, switched off</span>
+                    ) : tool.state === 'off' ? (
+                      <span className="font-bold text-held">Turned off by you</span>
                     ) : tool.state === 'built-in' ? (
                       ''
                     ) : (
@@ -153,7 +186,14 @@ export function AgentPage({ id, onError }: { id: string; onError: OnError }) {
                   </td>
                   <td className="py-2 text-right">
                     {tool.state === 'mismatch' && (
-                      <Button onClick={() => api.repin(tool.tool_id).then(reload, onError)}>Accept the change</Button>
+                      <Button owner onClick={() => api.repin(tool.tool_id).then(reload, onError)}>
+                        Accept the change
+                      </Button>
+                    )}
+                    {(tool.state === 'pinned' || tool.state === 'off') && (
+                      <Button owner onClick={() => switchTool(tool.name, tool.state === 'off')}>
+                        {tool.state === 'off' ? 'Turn on' : 'Turn off'}
+                      </Button>
                     )}
                   </td>
                 </tr>
