@@ -203,12 +203,15 @@ class BriefSettings(_Config):
     at: str = "07:30"
     # The model's summary is replaced by the template when longer than this.
     max_chars: int = Field(default=900, gt=100)
+    # Quiet hours, from this time until the brief: a call held then sends no Telegram card, and
+    # the brief asks about it instead. None sends every card at once.
+    quiet_from: str | None = "22:00"
 
-    @field_validator("at")
+    @field_validator("at", "quiet_from")
     @classmethod
-    def _hhmm(cls, value: str) -> str:
-        if not re.match(r"^(?:[01]\d|2[0-3]):[0-5]\d$", value):
-            raise ValueError("at must be HH:MM")
+    def _hhmm(cls, value: str | None) -> str | None:
+        if value is not None and not re.match(r"^(?:[01]\d|2[0-3]):[0-5]\d$", value):
+            raise ValueError("times must be HH:MM")
         return value
 
 

@@ -20,7 +20,8 @@ from pydantic import BaseModel, ConfigDict
 
 WEEKDAYS = ("monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday")
 SHORT_DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
-TIME = re.compile(r"\b\d{1,2}[:.]\d{2}\b")
+# A clock time; never an amount such as $0.50 or £14.00.
+TIME = re.compile(r"(?<![$£\d.,])\b\d{1,2}[:.]\d{2}\b")
 AMPM = re.compile(r"\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b", re.IGNORECASE)
 NUMBER = re.compile(r"\d+(?:\.\d+)?")
 WORD = re.compile(r"[a-z]+")
@@ -326,8 +327,9 @@ SYSTEM_PROMPT = (
     "Mail: one line per entry in mail: when it arrived, the sender domain, how many links "
     "Steward withheld, and whether the agent reported it. Leave this line out if mail is empty. "
     "Watcher: each pause, or 'no agent hit a hard limit' when pauses is empty. "
-    "Spend: each agent's spend_usd of its budget_usd, in US dollars with a $ sign (booking "
-    "prices are pounds, with a £ sign). Put each topic on its own line. "
+    "Spend: each agent's spend_usd of its budget_usd, in US dollars with a $ sign and every "
+    "digit as given, for example $0.1373 (booking prices are pounds, with a £ sign). Put each "
+    "topic on its own line. "
     "Use only the facts. Never count, add up or work out a number yourself: copy every time, "
     "date, amount and number exactly as written in the facts (24-hour times such as 07:30, "
     "dates such as Thu 15 Oct). Do not name JSON keys, do not invent anything, do not add "

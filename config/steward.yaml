@@ -155,6 +155,8 @@ helper:
 brief:
   at: "07:30"
   max_chars: 900
+  # Quiet hours until the brief: calls held from 22:00 send no Telegram card; the brief asks.
+  quiet_from: "22:00"
 
 # A copy of the database every night, in live sessions only (not during a story run).
 backup:

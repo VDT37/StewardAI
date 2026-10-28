@@ -23,9 +23,11 @@ import logging
 import secrets
 import time
 from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from steward_core.brief import BriefFacts
+from steward_core.clock import LONDON, parse_iso
 from steward_core.store import Hold
 from steward_gateway.holds import HoldError, short_fingerprint
 from steward_gateway.prompted import prompted_by
@@ -53,6 +55,25 @@ class QuestionToken:
     # (hold id, choice, fingerprint) for every hold the brief's question covers.
     decisions: list[tuple[str, str, str]]
     expires: float
+
+
+@dataclass
+class BriefMessage:
+    """A brief sent with a question: edited to say it is answered once its holds are decided."""
+
+    text: str
+    hold_ids: tuple[str, ...]
+
+
+def in_quiet_hours(moment: datetime, quiet_from: str | None, until: str) -> bool:
+    """Whether a moment falls in the quiet hours [quiet_from, until), London time, which may run
+    across midnight (22:00 to 07:30)."""
+    if quiet_from is None or quiet_from == until:
+        return False
+    now = moment.astimezone(LONDON).strftime("%H:%M")
+    if quiet_from < until:
+        return quiet_from <= now < until
+    return now >= quiet_from or now < until
 
 
 def card_html(hold: Hold, prompted: str | None = None) -> str:
@@ -83,6 +104,9 @@ class TelegramCards:
         self.buttons: dict[str, ButtonToken] = {}
         self.questions: dict[str, QuestionToken] = {}
         self.messages: dict[str, int] = {}
+        # Hold id -> the London time its card was sent (for the brief to point at it).
+        self.card_times: dict[str, str] = {}
+        self.briefs: dict[int, BriefMessage] = {}
         self._app: Any = None
         self._send_lock = asyncio.Lock()
         self._tasks: set[asyncio.Task[None]] = set()
@@ -113,13 +137,29 @@ class TelegramCards:
 
     # Holds -> cards ---------------------------------------------------------------------------
 
+    def quiet(self, hold: Hold) -> bool:
+        """A call held in the quiet hours waits for the morning brief instead of a card."""
+        brief = self.runtime.settings.policy.brief
+        if brief is None:
+            return False
+        return in_quiet_hours(parse_iso(hold.created), brief.quiet_from, brief.at)
+
     def on_hold(self, hold: Hold, event: str) -> None:
         if self._app is None:
             return
-        coro = self.send_card(hold) if event == "created" else self.close_card(hold)
+        if event == "created":
+            if self.quiet(hold):
+                return
+            coro = self.send_card(hold)
+        else:
+            coro = self.close(hold)
         task = asyncio.get_running_loop().create_task(coro)
         self._tasks.add(task)
         task.add_done_callback(self._tasks.discard)
+
+    async def close(self, hold: Hold) -> None:
+        await self.close_card(hold)
+        await self.close_briefs(hold)
 
     def button_token(self, hold: Hold, choice: str) -> str:
         token = secrets.token_urlsafe(9)
@@ -148,6 +188,9 @@ class TelegramCards:
                 reply_markup=keyboard,
             )
             self.messages[hold.hold_id] = message.message_id
+            self.card_times[hold.hold_id] = (
+                parse_iso(hold.created).astimezone(LONDON).strftime("%H:%M")
+            )
             await asyncio.sleep(SEND_GAP_S)
 
     async def close_card(self, hold: Hold) -> None:
@@ -167,13 +210,25 @@ class TelegramCards:
     # The morning brief (Phase 3) ---------------------------------------------------------------
 
     async def send_brief(self, text: str, facts: BriefFacts) -> None:
+        """The brief as one message. Its question gets Approve and Deny, unless a card for one
+        of its calls is already open: then the brief points to that card, so nothing is asked
+        twice."""
         if self._app is None:
             return
         from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
         markup = None
+        lines = [html.escape(line) for line in text.splitlines() if line.strip()]
         question = facts.question
-        if question is not None:
+        carded = (
+            [h.hold_id for h in question.holds if h.hold_id in self.messages] if question else []
+        )
+        if question is not None and carded:
+            times = sorted({self.card_times.get(h, "") for h in carded} - {""})
+            sent = f" sent at {', '.join(times)}" if times else ""
+            plural = "s" if len(carded) > 1 else ""
+            lines.append(f"Answer it on the card{plural}{sent}.")
+        elif question is not None:
             # A brief's question stays answerable all morning (until the holds expire).
             ttl = self.runtime.settings.policy.holds.expires_hours * 3600
             rows = []
@@ -185,15 +240,40 @@ class TelegramCards:
                 )
                 rows.append(InlineKeyboardButton(label, callback_data=f"q:{token}"))
             markup = InlineKeyboardMarkup([rows])
-        lines = [html.escape(line) for line in text.splitlines() if line.strip()]
+        body = "<b>Morning brief</b>\n" + "\n".join(lines)
         async with self._send_lock:
-            await self._app.bot.send_message(
+            message = await self._app.bot.send_message(
                 chat_id=self.owner_id,
-                text="<b>Morning brief</b>\n" + "\n".join(lines),
+                text=body,
                 parse_mode="HTML",
                 reply_markup=markup,
             )
+            if question is not None:
+                self.briefs[message.message_id] = BriefMessage(
+                    body, tuple(h.hold_id for h in question.holds)
+                )
             await asyncio.sleep(SEND_GAP_S)
+
+    async def close_briefs(self, hold: Hold) -> None:
+        """Once every call in a brief's question is decided (anywhere), say so on the brief and
+        drop its buttons."""
+        for message_id, brief in list(self.briefs.items()):
+            if hold.hold_id not in brief.hold_ids:
+                continue
+            found = [self.runtime.holds.get(h) for h in brief.hold_ids]
+            states = [h.state if h is not None else "unknown" for h in found]
+            if "pending" in states:
+                continue
+            self.briefs.pop(message_id, None)
+            async with self._send_lock:
+                await self._app.bot.edit_message_text(
+                    chat_id=self.owner_id,
+                    message_id=message_id,
+                    text=brief.text
+                    + f"\n\n<b>Answered:</b> {html.escape(', '.join(sorted(set(states))))}",
+                    parse_mode="HTML",
+                )
+                await asyncio.sleep(SEND_GAP_S)
 
     async def handle_question(self, data: str) -> str:
         token = data.removeprefix("q:")
