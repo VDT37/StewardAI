@@ -9,6 +9,10 @@ fingerprint, like a console approval.
 
 Polling (getUpdates) needs only outbound HTTPS, so it works while the VM allows SSH only. Only
 one poller per bot token may run, so never start a second Steward with the same token.
+
+Phase 3: the morning brief goes to the same chat, with Approve and Deny buttons for its one
+question. A question can cover several holds (a train and a taxi for one trip): its buttons
+decide each of them with its own stored fingerprint.
 """
 
 from __future__ import annotations
@@ -20,6 +24,7 @@ import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from steward_core.brief import BriefFacts
 from steward_core.store import Hold
 from steward_gateway.holds import HoldError, short_fingerprint
 
@@ -34,6 +39,13 @@ SEND_GAP_S = 1.0
 class ButtonToken:
     hold_id: str
     choice: str
+    expires: float
+
+
+@dataclass
+class QuestionToken:
+    # (hold id, choice, fingerprint) for every hold the brief's question covers.
+    decisions: list[tuple[str, str, str]]
     expires: float
 
 
@@ -59,6 +71,7 @@ class TelegramCards:
         self.owner_id = owner_id
         self.runtime = runtime
         self.buttons: dict[str, ButtonToken] = {}
+        self.questions: dict[str, QuestionToken] = {}
         self.messages: dict[str, int] = {}
         self._app: Any = None
         self._send_lock = asyncio.Lock()
@@ -140,6 +153,55 @@ class TelegramCards:
             )
             await asyncio.sleep(SEND_GAP_S)
 
+    # The morning brief (Phase 3) ---------------------------------------------------------------
+
+    async def send_brief(self, text: str, facts: BriefFacts) -> None:
+        if self._app is None:
+            return
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+        markup = None
+        question = facts.question
+        if question is not None:
+            # A brief's question stays answerable all morning (until the holds expire).
+            ttl = self.runtime.settings.policy.holds.expires_hours * 3600
+            rows = []
+            for choice, label in ((question.approve, "Approve"), (question.deny, "Deny")):
+                token = secrets.token_urlsafe(9)
+                self.questions[token] = QuestionToken(
+                    [(h.hold_id, choice, h.fingerprint) for h in question.holds],
+                    time.monotonic() + ttl,
+                )
+                rows.append(InlineKeyboardButton(label, callback_data=f"q:{token}"))
+            markup = InlineKeyboardMarkup([rows])
+        lines = [html.escape(line) for line in text.splitlines() if line.strip()]
+        async with self._send_lock:
+            await self._app.bot.send_message(
+                chat_id=self.owner_id,
+                text="<b>Morning brief</b>\n" + "\n".join(lines),
+                parse_mode="HTML",
+                reply_markup=markup,
+            )
+            await asyncio.sleep(SEND_GAP_S)
+
+    async def handle_question(self, data: str) -> str:
+        token = data.removeprefix("q:")
+        question = self.questions.get(token)
+        if question is None or question.expires < time.monotonic():
+            return "This button has expired. Use the console."
+        outcomes = []
+        for hold_id, choice, fingerprint in question.decisions:
+            try:
+                decided = await self.runtime.decide(
+                    hold_id, choice, fingerprint, "owner (telegram brief)"
+                )
+                outcomes.append(decided.state)
+            except HoldError as exc:
+                outcomes.append(exc.message)
+        for key in [k for k, q in self.questions.items() if q.decisions == question.decisions]:
+            self.questions.pop(key, None)
+        return "Done: " + "; ".join(outcomes)
+
     # Presses ----------------------------------------------------------------------------------
 
     async def _on_query(self, update: Any, context: Any) -> None:
@@ -153,6 +215,8 @@ class TelegramCards:
         """Decide a hold from a button press; returns the short answer shown to the owner."""
         if user_id != self.owner_id:
             return "Not allowed."
+        if data.startswith("q:"):
+            return await self.handle_question(data)
         token = data.removeprefix("d:")
         button = self.buttons.get(token)
         if button is None or button.expires < time.monotonic():

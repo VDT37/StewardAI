@@ -282,7 +282,8 @@ class Briefing:
         session = rt.recorder.session_id if rt.recorder.scope != "live" else None
 
         agents = []
-        for name, rules in policy.agents.items():
+        # Sorted: a recorded policy comes back with its keys in canonical (sorted) order.
+        for name, rules in sorted(policy.agents.items()):
             mine = [e for e in events if e.agent == name]
             spend = sum(
                 (

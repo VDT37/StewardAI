@@ -11,6 +11,11 @@ in for Tavily, and Steward's checks run fresh. No sandbox, no model call, no key
 The decision events (verdicts, trimmed replies, holds, executions) of the replay are then
 compared with the recording, as canonical JSON, after dropping timings. A pass shows Steward's
 decisions are deterministic; it does not show that the agents would act the same way again.
+
+Phase 3: scheduled jobs are replayed from their scheduler.run events ("system_action"), the
+morning brief's facts are recomputed and compared, and its text comes from the recording (like
+web results), so replay never calls the helper model. The watcher is not replayed from the log:
+it runs again on the replayed events and must pause at the same event.
 """
 
 from __future__ import annotations
@@ -66,12 +71,25 @@ DECISION_KINDS = frozenset(
         "world.reset",
         "admin.pass_suspended",
         "admin.pass_resumed",
+        # Phase 3
+        "admin.pass_revoked",
+        "admin.tool_off",
+        "admin.tool_on",
+        "watcher.paused",
+        "mail.screened",
+        "mail.verdict",
+        "scheduler.run",
+        "brief.facts",
     }
 )
 # Timings differ between runs; everything else in a decision event must match.
 VOLATILE = frozenset({"latency_ms", "duration_ms"})
 # Outcomes from outside Steward: the replayer releases the waiting code with the recording.
-GATED = {"tool.result": "call_id", "intent.executed": "intent_key"}
+GATED = {
+    "tool.result": "call_id",
+    "intent.executed": "intent_key",
+    "brief.written": "brief_id",
+}
 DELIVERIES = {"a2a.delivery": "request_id", "a2a.notice_delivery": "notice_id", "hold.told": "key"}
 WAIT_S = 5.0
 
@@ -253,7 +271,23 @@ async def replay_events(
         elif name == "clear_flags" and agent:
             runtime.clear_flags(agent, str(action.get("by", "owner")))
         elif name in {"suspend", "resume"} and agent:
-            runtime.set_suspended(agent, name == "suspend")
+            try:
+                runtime.set_suspended(agent, name == "suspend")
+            except ValueError:
+                pass
+        elif name == "revoke" and agent:
+            runtime.revoke(agent, str(action.get("by", "owner")))
+        elif name in {"tool_off", "tool_on"} and agent:
+            try:
+                runtime.set_tool(
+                    agent, str(action["tool"]), name == "tool_on", str(action.get("by", "owner"))
+                )
+            except ValueError:
+                pass
+        elif name == "mail_verdict":
+            runtime.mail_verdict(
+                str(action["message_id"]), str(action["verdict"]), str(action.get("by", "owner"))
+            )
 
     async with app.router.lifespan_context(app):
         for event in events:
@@ -276,6 +310,9 @@ async def replay_events(
                     runtime.reset_world(follow_clock=bool(action.get("follow_clock")))
                 elif action.get("change"):
                     await runtime.apply_world_change(str(action["change"]))
+            elif "system_action" in payload and runtime.scheduler is not None:
+                action = payload["system_action"]
+                spawn(runtime.scheduler.run_job(str(action["job"]), parse_iso(str(action["due"]))))
             elif kind in GATED:
                 gate.release(kind, str(payload[GATED[kind]]), payload)
             elif kind in DELIVERIES:

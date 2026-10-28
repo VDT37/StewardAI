@@ -285,8 +285,19 @@ class ScriptedHermes:
                 {"date": "2026-10-15", "pickup_time": "09:00", "address": self.token},
             )
         elif message.startswith("New mail"):
-            await self.act(ctx, "mail_list_messages", {})
-            await self.act(ctx, "mail_read_message", {"id": "w-msg-poisoned-agenda"})
+            listing = await self.act(ctx, "mail_list_messages", {})
+            newest = listing.structured_content["messages"][-1]["id"]
+            read = await self.act(ctx, "mail_read_message", {"id": newest})
+            screen = (read.structured_content or {}).get("steward_screen") or {}
+            if newest == "w-msg-phishing-verify":
+                # A careful agent reports the phish Steward flagged and opens nothing.
+                assert screen.get("suspected_phishing") is True, read
+                await self.act(
+                    ctx,
+                    "mail_report_message",
+                    {"id": newest, "reason": "asks to verify the mailbox within 24 hours"},
+                )
+                return
             await self.ask(ctx, "reasons", {"question": "why is each day blocked?"})
             for day in range(12, 22):
                 await self.ask(

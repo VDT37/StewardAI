@@ -7,6 +7,11 @@ an SSH tunnel (Phase 1 D7).
 Phase 2 adds the approvals queue (holds, decided with their fingerprint), the trifecta flags,
 Steward's clock, the fixture world, the agent-to-agent exchanges (what was sent beside what
 crossed), the policy file, scenario runs and replay.
+
+Phase 3 adds the morning brief (read it, answer its question, run it now), the contain controls
+(pause, resume, revoke, a tool off or on), suspected phishing with the owner's verdict, and the
+watcher. In demo mode (the public demo, Part F) there is no owner token: anyone may read, and
+nothing that changes Steward is reachable.
 """
 
 from __future__ import annotations
@@ -75,6 +80,15 @@ class ReplayIn(BaseModel):
     session_id: str | None = None
 
 
+class AnswerIn(BaseModel):
+    brief_id: str
+    choice: str  # "approve" or "deny": the brief's question's own choice ids
+
+
+class VerdictIn(BaseModel):
+    verdict: str  # phishing or not_phishing
+
+
 def event_json(event: Event) -> dict[str, Any]:
     return event.as_dict()
 
@@ -88,7 +102,15 @@ def hold_json(hold: Hold, policy_class: str | None) -> dict[str, Any]:
 
 
 def admin_router(ctx: Runtime) -> APIRouter:
+    demo = ctx.mode == "demo"
+
     def owner(request: Request) -> None:
+        if demo:
+            # The public demo: reading is open to anyone, changing anything is not, and a
+            # visitor's request never writes to the log.
+            if request.method not in {"GET", "HEAD"}:
+                raise HTTPException(403, "the public demo is read-only")
+            return
         if not ctx.passes.is_owner(request.headers.get("authorization")):
             ctx.recorder.record(
                 "auth", "auth.denied", {"path": request.url.path, "status": 401, "reason": "owner"}
@@ -108,10 +130,17 @@ def admin_router(ctx: Runtime) -> APIRouter:
         now = ctx.clock.now()
         day = london_day(now).isoformat()
         flags = ctx.flags.peek(agent, now)
+        if agent in ctx.passes.revoked:
+            state = "revoked"
+        elif agent in ctx.passes.suspended:
+            state = "suspended"
+        else:
+            state = "active"
         return {
             "id": agent,
             "model": rules.model,
-            "pass": "suspended" if agent in ctx.passes.suspended else "active",
+            "pass": state,
+            "tools_off": sorted(ctx.tool_door.disabled.get(agent, set())),
             "tools": len(ctx.tool_door.visible_tools(agent)),
             "spend_today_usd": str(ctx.model_door.spent_today(agent)),
             "budget_usd_per_day": str(rules.budget_usd_per_day),
@@ -141,6 +170,12 @@ def admin_router(ctx: Runtime) -> APIRouter:
             "web_backend": ctx.web_backend,
             "telegram": "telegram" in ctx.extras,
             "scenario": ctx.scenario or None,
+            "mode": ctx.mode,
+            "models": {
+                **{agent: rules.model for agent, rules in policy.agents.items()},
+                "brief": policy.helper.model if policy.helper else None,
+            },
+            "brief_at": policy.brief.at if policy.brief else None,
         }
 
     @router.get("/agents")
@@ -155,11 +190,12 @@ def admin_router(ctx: Runtime) -> APIRouter:
         for name, tool_id in ctx.tool_door.exposures[agent].items():
             entry = ctx.catalogue.tools.get(tool_id)
             rule = policy.tools.get(tool_id)
+            off = name in ctx.tool_door.disabled.get(agent, set())
             tools.append(
                 {
                     "name": name,
                     "tool_id": tool_id,
-                    "state": entry.state if entry else "missing",
+                    "state": "off" if off else entry.state if entry else "missing",
                     "fingerprint": entry.fingerprint if entry else None,
                     "pinned": entry.pinned if entry else None,
                     "tool_class": rule.tool_class if rule else None,
@@ -199,8 +235,32 @@ def admin_router(ctx: Runtime) -> APIRouter:
     @router.post("/agents/{agent}/resume")
     async def resume(agent: str) -> dict[str, Any]:
         require_agent(agent)
-        ctx.set_suspended(agent, False)
+        try:
+            ctx.set_suspended(agent, False)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
         return agent_summary(agent)
+
+    @router.post("/agents/{agent}/revoke")
+    async def revoke(agent: str) -> dict[str, Any]:
+        require_agent(agent)
+        ctx.revoke(agent, "owner (console)")
+        return agent_summary(agent)
+
+    @router.post("/agents/{agent}/tools/{tool}/{state}")
+    async def switch_tool(agent: str, tool: str, state: str) -> dict[str, Any]:
+        require_agent(agent)
+        if state not in {"on", "off"}:
+            raise HTTPException(404, "state must be on or off")
+        try:
+            ctx.set_tool(agent, tool, state == "on", "owner (console)")
+        except ValueError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        return agent_summary(agent)
+
+    @router.get("/controls")
+    async def controls() -> list[dict[str, Any]]:
+        return ctx.store.controls()
 
     @router.get("/log")
     async def log(
@@ -217,6 +277,9 @@ def admin_router(ctx: Runtime) -> APIRouter:
 
     @router.get("/log/stream", response_class=EventSourceResponse)
     async def stream(after_seq: int = 0, follow: bool = True) -> AsyncIterable[ServerSentEvent]:
+        if demo:
+            # Nothing changes in the demo, so a visitor's stream ends after the history.
+            follow = False
         queue: asyncio.Queue[Event] = asyncio.Queue(maxsize=1000)
 
         def listener(event: Event) -> None:
@@ -491,6 +554,100 @@ def admin_router(ctx: Runtime) -> APIRouter:
                     }
                 )
         return list(reversed(items))[:limit]
+
+    # Morning brief, mail and watcher (Phase 3) -------------------------------------------
+
+    @router.get("/brief")
+    async def brief() -> dict[str, Any]:
+        from steward_gateway.supervisor import latest_brief
+
+        return latest_brief(ctx) or {"state": "none"}
+
+    @router.post("/brief/run")
+    async def brief_run() -> dict[str, Any]:
+        """Write a brief now (for a check; the scheduler writes it every morning)."""
+        from steward_gateway.supervisor import latest_brief
+
+        if ctx.scheduler is None or "brief" not in ctx.scheduler.jobs:
+            raise HTTPException(409, "the policy has no brief section")
+        await ctx.scheduler.run_job("brief", ctx.clock.now())
+        return latest_brief(ctx) or {"state": "none"}
+
+    @router.post("/brief/answer")
+    async def brief_answer(body: AnswerIn) -> dict[str, Any]:
+        """Answer the brief's one question: decide each of its holds with its fingerprint."""
+        from steward_gateway.supervisor import latest_brief
+
+        found = latest_brief(ctx)
+        if found is None or found.get("brief_id") != body.brief_id:
+            raise HTTPException(404, "no such brief, or a newer one exists")
+        question = found.get("question")
+        if not question:
+            raise HTTPException(409, "this brief has no question")
+        choice = question["approve"] if body.choice == "approve" else question["deny"]
+        outcomes = []
+        for item in question["holds"]:
+            try:
+                hold = await ctx.decide(
+                    str(item["hold_id"]), choice, str(item["fingerprint"]), "owner (brief)"
+                )
+                outcomes.append({"hold_id": hold.hold_id, "state": hold.state})
+            except HoldError as exc:
+                outcomes.append({"hold_id": item["hold_id"], "error": exc.message})
+        return {"brief_id": body.brief_id, "choice": choice, "outcomes": outcomes}
+
+    @router.get("/mail")
+    async def mail() -> list[dict[str, Any]]:
+        """Suspected phishing Steward screened, newest first, with the owner's verdict."""
+        verdicts = {c["target"]: c["data"] for c in ctx.store.controls("mail_verdict")}
+        seen: dict[str, dict[str, Any]] = {}
+        for e in ctx.store.events(kind="mail.screened", limit=500, newest_first=False):
+            message_id = str(e.payload.get("message_id"))
+            item = seen.setdefault(
+                message_id,
+                {**e.payload, "first_seen": e.ts, "agent": e.agent, "reads": 0},
+            )
+            item["reads"] += 1
+        items = []
+        for message_id, item in seen.items():
+            item["verdict"] = (verdicts.get(message_id) or {}).get("verdict")
+            item["reported_by_agent"] = message_id in ctx.world.reported
+            items.append(item)
+        return list(reversed(items))
+
+    @router.post("/mail/{message_id}/verdict")
+    async def mail_verdict(message_id: str, body: VerdictIn) -> dict[str, Any]:
+        try:
+            ctx.mail_verdict(message_id, body.verdict, "owner (console)")
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return {"message_id": message_id, "verdict": body.verdict}
+
+    @router.get("/watcher")
+    async def watcher() -> dict[str, Any]:
+        settings = policy.watcher
+        pauses = [
+            {"ts": e.ts, "agent": e.agent, **e.payload}
+            for e in ctx.store.events(kind="watcher.paused", limit=50)
+        ]
+        baselines = ctx.store.events(kind="brief.baselines", limit=1)
+        return {
+            "on": settings is not None,
+            "limits": settings.model_dump(mode="json") if settings else None,
+            "agents": {
+                agent: {
+                    "pass": "revoked"
+                    if agent in ctx.passes.revoked
+                    else "paused"
+                    if agent in ctx.passes.suspended
+                    else "active",
+                    "tools_off": sorted(ctx.tool_door.disabled.get(agent, set())),
+                }
+                for agent in policy.agents
+            },
+            "pauses": pauses,
+            "baselines": baselines[0].payload.get("baselines") if baselines else [],
+        }
 
     @router.get("/policy")
     async def policy_view() -> dict[str, Any]:

@@ -231,6 +231,9 @@ async def run_manchester(rt: Runtime, approvals: str, speed: float, attacks: str
         )
         rt.clock.set(runner.story(-1, "19:00"), rate=1.0)
         rt.recorder.record("system", "system.clock", rt.clock.describe())
+        if rt.scheduler is not None:
+            # Jobs in this run fire only for due times after Sunday 19:00 (the 07:30 brief).
+            rt.scheduler.observe()
         rt.reset_world(follow_clock=True)
         script = {c.id: c for c in overnight_changes(runner.anchor)}
 
@@ -243,6 +246,12 @@ async def run_manchester(rt: Runtime, approvals: str, speed: float, attacks: str
         await runner.advance_to(runner.story(-1, "19:06"))
         await runner.decide("19:06")
         await runner.run_agent("work", "19:06 after the approvals", FOLLOW_UP)
+
+        # Sun 21:15: a phishing email lands in the work inbox (Phase 3). Steward screens it
+        # when the work agent reads it: its link is withheld and the agent can report it.
+        await runner.advance_to(runner.story(-1, "21:15"))
+        await rt.apply_world_change("chg-phishing-arrives")
+        await runner.run_agent("work", "21:15 new mail", NEW_MAIL)
 
         # Sun 22:40: the poisoned agenda arrives.
         await runner.advance_to(runner.story(-1, "22:40"))
@@ -275,6 +284,15 @@ async def run_manchester(rt: Runtime, approvals: str, speed: float, attacks: str
         await runner.scripted_write(
             "chg-todo-stale-write-by-personal", "01:30 the personal agent renames the same item"
         )
+
+        # Mon 07:30: the morning brief, written because the clock reached 07:30 (nobody asks
+        # for it). The runner ticks the scheduler itself so the beat does not wait for its loop.
+        await runner.advance_to(runner.story(0, "07:30"))
+        if rt.scheduler is not None and "brief" in rt.scheduler.jobs:
+            seq, _ = rt.store.head()
+            await rt.scheduler.tick()
+            if await runner.wait_for("brief.written", seq, timeout_s=120):
+                runner.beat("07:30 morning brief", actor="steward")
 
         # Mon 07:35: the owner approves the paid changes; Steward tells the work agent.
         await runner.advance_to(runner.story(0, "07:35"))
