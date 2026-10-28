@@ -216,3 +216,10 @@ def test_an_amount_is_not_read_as_a_clock_time() -> None:
     assert check_text("Spend: work $0.00 of $2.50, personal $0.0100 of $1.25.", facts()) == []
     problems = check_text("Spend: work $0.14 of $2.50.", facts())
     assert problems == ["number 0.14 is not in the facts"]
+
+
+def test_a_copied_field_name_fails_the_check() -> None:
+    assert "names a field instead of saying what it means" in check_text(
+        "Work agent: calls_held_for_owner 4.", facts()
+    )
+    assert check_text("Work agent: 4 calls held for you.", facts()) == []

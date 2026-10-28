@@ -24,6 +24,8 @@ SHORT_DAYS = ("mon", "tue", "wed", "thu", "fri", "sat", "sun")
 TIME = re.compile(r"(?<![$£\d.,])\b\d{1,2}[:.]\d{2}\b")
 AMPM = re.compile(r"\b\d{1,2}(?::\d{2})?\s*(?:am|pm)\b", re.IGNORECASE)
 NUMBER = re.compile(r"\d+(?:\.\d+)?")
+# A JSON key such as calls_held_for_owner copied into the text.
+FIELD_NAME = re.compile(r"\b[a-z]+_[a-z_]+\b")
 WORD = re.compile(r"[a-z]+")
 
 
@@ -306,6 +308,8 @@ def check_text(
         problems.append("contains a link")
     if "?" in text:
         problems.append("asks a question (only code writes the question)")
+    if FIELD_NAME.search(text):
+        problems.append("names a field instead of saying what it means")
     if AMPM.search(text):
         problems.append("uses am or pm instead of the 24-hour times in the facts")
     times, numbers, days = allowed_tokens(facts)
