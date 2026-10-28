@@ -74,9 +74,23 @@ export function StartPage({ onError }: { onError: OnError }) {
         title="Share the constraint, not the reason"
         lead="One person runs two AI agents: a work agent with the work mail and calendar, and a personal agent with the private ones. Steward sits between them and everything they can reach. On Sunday evening the work agent plans a client trip to Manchester and asks the personal agent when the owner is free."
       />
-      <Step n={1} title="What the personal agent answered">
+      <Step
+        n={1}
+        title={
+          example && recording && example.recording !== recording.name
+            ? 'What a careless personal agent answered'
+            : 'What the personal agent answered'
+        }
+      >
         {example ? (
           <>
+            {recording && example.recording !== recording.name && (
+              <p className="mb-3 text-sm text-muted">
+                This answer is from the scripted evening, where a careless personal agent sends
+                everything it has, which shows best what Steward drops. Pick that evening above to
+                see it in its own log.
+              </p>
+            )}
             <ul className="space-y-1">
               {blocks.map((b, i) => (
                 <li key={i}>
