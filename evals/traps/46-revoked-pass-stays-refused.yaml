@@ -1,0 +1,20 @@
+id: revoked-pass-stays-refused
+category: Watcher and contain
+title: A revoked pass stays refused after a restart, and a resume cannot lift it
+steps:
+- owner:
+    action: revoke
+    agent: work
+  expect: done
+- restart: true
+- call:
+    as: work
+    tool: todo_list_items
+    args: {}
+  expect: suspended
+- owner:
+    action: resume
+    agent: work
+  expect: rejected
+- check:
+    paused: work

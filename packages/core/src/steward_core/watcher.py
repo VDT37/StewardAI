@@ -84,6 +84,11 @@ class HardLimits:
     def reset(self) -> None:
         self._windows.clear()
 
+    def forget(self, session_id: str, agent: str) -> None:
+        """Start the agent's windows again: the owner resumed it after looking at the pause."""
+        for key in [k for k in self._windows if k[:2] == (session_id, agent)]:
+            del self._windows[key]
+
     def _push(self, key: tuple[str, str, str], at: datetime, minutes: float) -> int:
         window = self._windows.setdefault(key, deque())
         window.append(at)

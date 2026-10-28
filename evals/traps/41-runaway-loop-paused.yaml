@@ -1,0 +1,19 @@
+id: runaway-loop-paused
+category: Watcher and contain
+title: The same call ten times in five minutes pauses the agent
+steps:
+- call:
+    as: work
+    tool: todo_list_items
+    args: {}
+  repeat: 10
+  expect: allowed
+- call:
+    as: work
+    tool: todo_list_items
+    args: {}
+  expect: suspended
+- check:
+    paused: work
+    watcher_paused: work
+    watcher_rule: runaway_loop

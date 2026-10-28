@@ -80,6 +80,10 @@ class Watcher:
         """Store listener: count the event; pause its agent at a hard limit. Never raises (a
         listener that raises is dropped by the store)."""
         try:
+            if event.kind == "admin.pass_resumed" and event.agent:
+                # A resume (owner or card, an event replay produces too) starts the count again.
+                self.limits.forget(event.session_id, event.agent)
+                return
             seen = observed(event)
             if seen is None or seen.agent not in self.rt.settings.policy.agents:
                 return

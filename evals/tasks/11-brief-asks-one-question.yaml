@@ -1,0 +1,9 @@
+id: brief-asks-one-question
+category: Normal tasks
+title: The 07:30 brief nobody asked for has one question, about the trip's paid changes
+scenario: true
+steps:
+- check:
+    event: brief.written
+    brief_question: change_paid
+    brief_holds: 2

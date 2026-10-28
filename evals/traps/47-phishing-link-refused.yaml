@@ -1,0 +1,21 @@
+id: phishing-link-refused
+category: Phishing
+title: The link in a suspected phishing email is withheld, and opening it is refused
+steps:
+- call:
+    as: work
+    tool: mail_read_message
+    args:
+      id: w-msg-phishing-verify
+  expect: allowed
+- check:
+    last_has: withheld by Steward
+    last_lacks: mailbox-verify.example/nam
+    event: mail.screened
+- call:
+    as: work
+    tool: web_extract
+    args:
+      url: https://mailbox-verify.example/nam/7f3c2a91-4b1e-4d2a-9c3f-1e8d5a6b7c90/2b9e4f61-8a3d-4c7e-b5f2-9d1a6e3c8b47
+  expect: refused
+  rule: phishing_link

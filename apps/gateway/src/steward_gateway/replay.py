@@ -24,11 +24,14 @@ import asyncio
 import json
 import time
 from collections import Counter
-from collections.abc import Iterable, Mapping
+from collections.abc import AsyncIterator, Iterable, Mapping
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import httpx
+from fastapi import FastAPI
 
 from steward_core.canonical import jcs
 from steward_core.clock import StewardClock, parse_iso
@@ -174,9 +177,27 @@ def _replay_settings(policy: Policy) -> Settings:
     )
 
 
+@dataclass
+class ReplayRun:
+    app: FastAPI
+    runtime: Runtime
+    result: dict[str, Any]
+
+
 async def replay_events(
     events: list[dict[str, Any]], policy_path: str | None = None
 ) -> dict[str, Any]:
+    async with replayed(events, policy_path) as run:
+        return run.result
+
+
+@asynccontextmanager
+async def replayed(
+    events: list[dict[str, Any]], policy_path: str | None = None, *, mode: str = "owner"
+) -> AsyncIterator[ReplayRun]:
+    """Replay a session and keep the replayed Steward running until the block ends. The public
+    demo (mode "demo") serves it read-only, its clock frozen at the last recorded event, so the
+    site a visitor sees is the replay itself."""
     from steward_gateway.app import create_app
 
     started = time.perf_counter()
@@ -211,6 +232,7 @@ async def replay_events(
         gate=gate,
         session_id=session_id,
         anchor_value=anchor or "replay",
+        mode=mode,
     )
     runtime: Runtime = app.state.steward
     if scoped:
@@ -219,11 +241,7 @@ async def replay_events(
     recorded_counts: Counter[str] = Counter()
 
     def produced(kind: str) -> int:
-        return sum(
-            1
-            for e in store.events(kind=kind, limit=5000, newest_first=False)
-            if e.session_id == session_id
-        )
+        return len(store.events(kind=kind, limit=5000, newest_first=False, session_id=session_id))
 
     async def catch_up(kind: str) -> bool:
         """Wait until the replay has produced this event; False if it never does."""
@@ -242,8 +260,8 @@ async def replay_events(
         nonlocal checked
         got = [
             e.as_dict()
-            for e in store.events(after_seq=0, limit=5000, newest_first=False)
-            if e.session_id == session_id and e.kind in DECISION_KINDS
+            for e in store.events(limit=5000, newest_first=False, session_id=session_id)
+            if e.kind in DECISION_KINDS
         ]
         while checked < len(got):
             if checked >= len(want) or decision(want[checked]) != decision(got[checked]):
@@ -342,32 +360,33 @@ async def replay_events(
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
 
-    got = [
-        e.as_dict()
-        for e in store.events(limit=5000, newest_first=False)
-        if e.session_id == session_id and e.kind in DECISION_KINDS
-    ]
-    first: dict[str, Any] | None = None
-    for index in range(max(len(want), len(got))):
-        a = want[index] if index < len(want) else None
-        b = got[index] if index < len(got) else None
-        if a is None or b is None or decision(a) != decision(b):
-            first = {
-                "index": index,
-                "recorded": _brief(a),
-                "replayed": _brief(b),
-            }
-            break
-    return {
-        "ok": first is None,
-        "session_id": session_id,
-        "compared": min(len(want), len(got)),
-        "recorded_decisions": len(want),
-        "replayed_decisions": len(got),
-        "events_in_recording": len(events),
-        "first_difference": first,
-        "seconds": round(time.perf_counter() - started, 2),
-    }
+        got = [
+            e.as_dict()
+            for e in store.events(limit=5000, newest_first=False, session_id=session_id)
+            if e.kind in DECISION_KINDS
+        ]
+        first: dict[str, Any] | None = None
+        for index in range(max(len(want), len(got))):
+            a = want[index] if index < len(want) else None
+            b = got[index] if index < len(got) else None
+            if a is None or b is None or decision(a) != decision(b):
+                first = {
+                    "index": index,
+                    "recorded": _brief(a),
+                    "replayed": _brief(b),
+                }
+                break
+        result = {
+            "ok": first is None,
+            "session_id": session_id,
+            "compared": min(len(want), len(got)),
+            "recorded_decisions": len(want),
+            "replayed_decisions": len(got),
+            "events_in_recording": len(events),
+            "first_difference": first,
+            "seconds": round(time.perf_counter() - started, 2),
+        }
+        yield ReplayRun(app, runtime, result)
 
 
 def _brief(event: Mapping[str, Any] | None) -> dict[str, Any] | None:

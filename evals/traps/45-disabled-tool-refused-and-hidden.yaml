@@ -1,0 +1,35 @@
+id: disabled-tool-refused-and-hidden
+category: Watcher and contain
+title: A tool the owner turned off is left out of the list and refused, even after a restart
+steps:
+- owner:
+    action: tool_off
+    agent: work
+    tool: web_extract
+  expect: done
+- check:
+    tool_hidden: [work, web_extract]
+- call:
+    as: work
+    tool: web_extract
+    args:
+      url: https://manchester-station-guide.example/piccadilly-step-free
+  expect: denied
+- restart: true
+- call:
+    as: work
+    tool: web_extract
+    args:
+      url: https://manchester-station-guide.example/piccadilly-step-free
+  expect: denied
+- owner:
+    action: tool_on
+    agent: work
+    tool: web_extract
+  expect: done
+- call:
+    as: work
+    tool: web_extract
+    args:
+      url: https://manchester-station-guide.example/piccadilly-step-free
+  expect: allowed

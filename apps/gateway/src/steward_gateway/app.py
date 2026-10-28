@@ -90,10 +90,15 @@ def create_app(
     session_id: str | None = None,
     anchor_value: str | None = None,
     run_scheduler: bool = False,
+    mode: str = "owner",
 ) -> FastAPI:
     """Build Steward. The keyword arguments replace the real parts in tests and replay.
     run_scheduler starts the scheduler's loop (the real service); tests and replay run jobs
-    themselves."""
+    themselves. mode "demo" is the public demo (a replay served read-only): no model door, no
+    tool endpoints, no approval links and no Telegram, only the admin API for reading."""
+    if mode not in {"owner", "demo"}:
+        raise ValueError("mode must be owner or demo")
+    demo = mode == "demo"
     cfg = settings or Settings.from_env()
     policy = cfg.policy
     steward_clock = clock or StewardClock()
@@ -200,8 +205,9 @@ def create_app(
         checker_name=checker.name,
         anchor=anchor.isoformat(),
         web_backend=backend.name if upstream_servers is None else "custom",
+        mode=mode,
     )
-    telegram = TelegramCards.from_settings(cfg, runtime)
+    telegram = None if demo else TelegramCards.from_settings(cfg, runtime)
     if telegram is not None:
         holds.listeners.append(telegram.on_hold)
         runtime.extras["telegram"] = telegram
@@ -290,11 +296,12 @@ def create_app(
     async def healthz() -> dict[str, str]:
         return {"status": "ok"}
 
-    app.include_router(model_door.router())
     app.include_router(admin_router(runtime))
-    app.include_router(links_router(runtime))
-    for agent, tool_app in tool_apps.items():
-        app.mount(f"/tools/{agent}", PassGate(tool_app, agent, passes, recorder))
+    if not demo:
+        app.include_router(model_door.router())
+        app.include_router(links_router(runtime))
+        for agent, tool_app in tool_apps.items():
+            app.mount(f"/tools/{agent}", PassGate(tool_app, agent, passes, recorder))
     if cfg.console_dir.is_dir():
         app.mount("/console", StaticFiles(directory=cfg.console_dir, html=True), name="console")
     # Tests and tools reach the running parts through here.
