@@ -137,8 +137,23 @@ class BriefFacts(_Fact):
             stale.pop("item", None)
         for refused in data["refused"]:
             refused.pop("what", None)
+        data["refused_calls"] = data.pop("refused")
+        data["asks_held_by_daily_limit_or_burst"] = data.pop("asks_held")
         data["calls_waiting_for_owner"] = data.pop("pending")
+        # Names that say what each count is, so a held call is not read as a held ask.
+        for night in data["agents"]:
+            for old, new in MODEL_NAMES.items():
+                night[new] = night.pop(old)
         return data
+
+
+# The per-agent counts as the helper model sees them.
+MODEL_NAMES = {
+    "asks": "asks_to_the_other_agent",
+    "answered": "requests_answered",
+    "refused": "calls_refused",
+    "held": "calls_held_for_owner",
+}
 
 
 # Template ---------------------------------------------------------------------------------------
@@ -318,10 +333,11 @@ SYSTEM_PROMPT = (
     "facts as JSON. Write 4 to 6 short lines in plain, friendly British English, one line per "
     "topic, each starting with its topic and a colon, in this order: "
     "Work agent: what it booked (bookings: kind, date, time, price, whether an address stand-in "
-    "was used), how many of its asks were refused (refused) or held by the daily limit or burst "
-    "check (asks_held). "
-    "Personal agent: how many requests it answered (answered) and any change notice Steward "
-    "passed on (notices: when, date, start to end). "
+    "was used), how many of its calls were refused (calls_refused), how many calls wait for the "
+    "owner (calls_held_for_owner), and how many of its asks the daily limit or burst check held "
+    "(asks_held_by_daily_limit_or_burst). Leave out any count that is 0. "
+    "Personal agent: how many requests it answered (requests_answered) and any change notice "
+    "Steward passed on (notices: when, date, start to end). "
     "Shared to-do list: only if stale_writes is not empty, say a write made from an old copy "
     "was held and when. "
     "Mail: one line per entry in mail: when it arrived, the sender domain, how many links "
