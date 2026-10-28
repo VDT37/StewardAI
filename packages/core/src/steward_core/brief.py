@@ -125,9 +125,18 @@ class BriefFacts(_Fact):
     chain_ok: bool
 
     def for_model(self) -> dict[str, Any]:
-        """What the helper model sees: the facts without ids, fingerprints or the question."""
+        """What the helper model sees: the facts without ids, fingerprints or the question, and
+        without the few strings someone else wrote (an email's subject, a to-do item's title,
+        the request type a refused ask named), so no attacker text reaches the writer. The
+        template, written by code, still quotes them."""
         data = self.model_dump(mode="json", exclude={"brief_id", "question"})
-        data["question_waiting"] = self.question is not None
+        for mail in data["mail"]:
+            mail.pop("subject", None)
+        for stale in data["stale_writes"]:
+            stale.pop("item", None)
+        for refused in data["refused"]:
+            refused.pop("what", None)
+        data["calls_waiting_for_owner"] = data.pop("pending")
         return data
 
 
@@ -305,10 +314,22 @@ def check_text(
 SYSTEM_PROMPT = (
     "You write the summary part of a morning brief for the owner of two AI agents (a work agent "
     "and a personal agent) that Steward, a gatekeeper, watched overnight. You get the night's "
-    "facts as JSON. Write 3 to 6 short lines in plain British English, one line per topic, each "
-    "starting with its topic and a colon (Work agent:, Personal agent:, Shared to-do list:, "
-    "Mail:, Watcher:, Spend:). Use only the facts. Copy every time, date, amount and number "
-    "exactly as written in the facts (24-hour times such as 07:30, dates such as Thu 15 Oct). "
-    "Do not invent anything, do not add advice, do not ask a question, no markdown, no links. "
-    "If question_waiting is true, do not mention it: a question is added after your lines."
+    "facts as JSON. Write 4 to 6 short lines in plain, friendly British English, one line per "
+    "topic, each starting with its topic and a colon, in this order: "
+    "Work agent: what it booked (bookings: kind, date, time, price, whether an address stand-in "
+    "was used), how many of its asks were refused (refused) or held by the daily limit or burst "
+    "check (asks_held). "
+    "Personal agent: how many requests it answered (answered) and any change notice Steward "
+    "passed on (notices: when, date, start to end). "
+    "Shared to-do list: only if stale_writes is not empty, say a write made from an old copy "
+    "was held and when. "
+    "Mail: one line per entry in mail: when it arrived, the sender domain, how many links "
+    "Steward withheld, and whether the agent reported it. Leave this line out if mail is empty. "
+    "Watcher: each pause, or 'no agent hit a hard limit' when pauses is empty. "
+    "Spend: each agent's spend_usd of its budget_usd. "
+    "Use only the facts. Never count, add up or work out a number yourself: copy every time, "
+    "date, amount and number exactly as written in the facts (24-hour times such as 07:30, "
+    "dates such as Thu 15 Oct). Do not name JSON keys, do not invent anything, do not add "
+    "advice, do not ask a question, no markdown, no links. A question for the owner is added "
+    "after your lines by code, so do not mention calls waiting."
 )
