@@ -119,3 +119,12 @@ def test_telegram_presses_decide_only_for_the_owner(tmp_path: Path) -> None:
     assert owner == "Done: the hold is now denied." and state == "denied"
     assert again.startswith("This button has expired")
     assert expired.startswith("This button has expired")
+
+
+def test_request_urls_with_the_bot_token_are_not_logged() -> None:
+    """The Bot API puts the token in the URL; httpx must not log request URLs at INFO."""
+    import logging
+
+    import steward_gateway.telegram_cards  # noqa: F401
+
+    assert not logging.getLogger("httpx").isEnabledFor(logging.INFO)

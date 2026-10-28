@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import html
+import logging
 import secrets
 import time
 from dataclasses import dataclass
@@ -33,6 +34,10 @@ if TYPE_CHECKING:
     from steward_gateway.settings import Settings
 
 SEND_GAP_S = 1.0
+
+# The Bot API puts the bot token in every request URL, and httpx logs each request's URL at
+# INFO, so with Telegram on the token reached the journal on every poll. httpx stays at WARNING.
+logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
 @dataclass
