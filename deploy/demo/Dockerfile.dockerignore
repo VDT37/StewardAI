@@ -1,0 +1,19 @@
+# Build context for deploy/demo/Dockerfile (BuildKit reads this file for that Dockerfile only).
+# Secrets and local state never enter the context.
+.env
+.env.*
+*.env
+*.pem
+var/
+.git/
+.venv/
+**/node_modules/
+**/__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+agents/
+spikes/
+evals/
+docs/
