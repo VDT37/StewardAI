@@ -521,8 +521,13 @@ class Briefing:
 
     # Writing ----------------------------------------------------------------------------------
 
-    def forbidden(self) -> list[str]:
-        return [d["text"] for d in planted_details()] + home_address_parts()
+    def forbidden(self, facts: BriefFacts) -> list[str]:
+        """Planted details and the home address, except those the facts themselves carry (a
+        lookalike sender's domain can contain a client's name): copying a fact is not a leak,
+        anything else from that list in the text is."""
+        given = json.dumps(facts.for_model(), ensure_ascii=False).lower()
+        found = [d["text"] for d in planted_details()] + home_address_parts()
+        return [text for text in found if text.lower() not in given]
 
     async def write(self, facts: BriefFacts) -> tuple[str, dict[str, Any]]:
         """(the summary lines, info): from the helper model when its text passes the check,
@@ -542,7 +547,7 @@ class Briefing:
         text, error = await self._ask_helper(facts)
         if error is not None or text is None:
             return template, {"source": "template", "model": helper.model, "problems": [error]}
-        problems = check_text(text, facts, forbidden=self.forbidden(), max_chars=max_chars)
+        problems = check_text(text, facts, forbidden=self.forbidden(facts), max_chars=max_chars)
         if problems:
             return template, {"source": "template", "model": helper.model, "problems": problems[:8]}
         return text.strip(), {"source": "model", "model": helper.model, "problems": []}

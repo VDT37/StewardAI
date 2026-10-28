@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from gateway_helpers import make_settings, running, story_clock
+from gateway_helpers import call, make_settings, running, story_clock
 
 from steward_core.clock import StewardClock
 from steward_fixtures import at, resolve_anchor
@@ -58,8 +58,13 @@ def test_a_brief_missed_while_steward_was_down_runs_once_after_the_restart(
     assert asyncio.run(scenario()) == (["brief"], [], 2)
 
 
-def brief_with(tmp_path: Path, answer: Callable[[httpx.Request], httpx.Response]) -> dict[str, Any]:
-    """Run the brief once with the helper model answering through `answer`."""
+def brief_with(
+    tmp_path: Path,
+    answer: Callable[[httpx.Request], httpx.Response],
+    read_mail: str | None = None,
+) -> dict[str, Any]:
+    """Run the brief once with the helper model answering through `answer`, after the work agent
+    read `read_mail` (so the night has a suspected phish in it)."""
     sent: list[dict[str, Any]] = []
 
     def upstream(request: httpx.Request) -> httpx.Response:
@@ -76,6 +81,8 @@ def brief_with(tmp_path: Path, answer: Callable[[httpx.Request], httpx.Response]
         )
         ctx = app.state.steward
         async with app.router.lifespan_context(app):
+            if read_mail:
+                await call(ctx, "work", "mail_read_message", {"id": read_mail})
             await ctx.scheduler.run_job("brief", clock.now())
             found = latest_brief(ctx)
             assert found is not None
@@ -119,3 +126,14 @@ def test_a_failed_model_call_falls_back_to_the_template(tmp_path: Path) -> None:
     found = brief_with(tmp_path, lambda request: httpx.Response(500))
     assert found["source"] == "template" and found["problems"] == ["HTTP 500"]
     assert "Watcher: no agent hit a hard limit." in found["text"]
+
+
+def test_copying_a_fact_that_names_a_client_is_not_a_leak(tmp_path: Path) -> None:
+    """The 22:40 lookalike sender's domain carries the client's name; the model may repeat what
+    the facts say, but never a private detail the facts do not carry."""
+    line = "Mail: a suspected phishing email from brightwater-logistlcs.example arrived at 22:40."
+    found = brief_with(tmp_path / "copy", completion(line), read_mail="w-msg-poisoned-agenda")
+    assert found["source"] == "model", found["problems"]
+    leak = "Mail: the 22:40 email came while Dr Shah was on the calendar."
+    found = brief_with(tmp_path / "leak", completion(leak), read_mail="w-msg-poisoned-agenda")
+    assert found["source"] == "template" and "contains a private detail" in found["problems"]
