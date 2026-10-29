@@ -505,6 +505,9 @@ async def main(argv: list[str] | None = None) -> int:
                 "faults": faults,
                 "asks": [c.__dict__ for c in asks],
                 "replies": [c.__dict__ for c in replies],
+                "judge_calls": {
+                    a.name: [c.__dict__ for c in a.judge.calls] for a in arms if a.judge is not None
+                },
                 "rows": {
                     a.name: sorted(a.rows, key=lambda r: (r["case"], r["check"], r["run"]))
                     for a in arms

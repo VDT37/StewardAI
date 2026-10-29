@@ -106,7 +106,8 @@ class NemotronJudge:
         client: httpx.AsyncClient,
         price: Price | None = None,
         timeout_s: float = 60.0,
-        max_tokens: int = 1500,
+        # Both models reason first (about 1,100 to 1,500 tokens per check in a probe on 29 Oct).
+        max_tokens: int = 8192,
         reasoning_effort: str | None = None,
     ) -> None:
         self.model = model
@@ -230,16 +231,22 @@ def _window(ctx: CheckContext) -> list[str] | None:
 
 
 def _json_object(content: Any) -> dict[str, Any]:
-    """The JSON object in the model's answer (after any reasoning text)."""
+    """The last JSON object with a decision in the model's answer.
+
+    Both models reason before they answer, and the reasoning text can hold braces of its own, so
+    the answer is the last object that parses and has a "decision" key."""
     if not isinstance(content, str):
         raise ValueError("the model returned no text")
-    start, end = content.find("{"), content.rfind("}")
-    if start < 0 or end < start:
-        raise ValueError("no JSON object in the answer")
-    parsed = json.loads(content[start : end + 1])
-    if not isinstance(parsed, dict):
-        raise ValueError("the answer is not a JSON object")
-    return parsed
+    decoder = json.JSONDecoder()
+    starts = [i for i, ch in enumerate(content) if ch == "{"]
+    for start in reversed(starts):
+        try:
+            parsed, _ = decoder.raw_decode(content, start)
+        except ValueError:
+            continue
+        if isinstance(parsed, dict) and "decision" in parsed:
+            return parsed
+    raise ValueError("no JSON object with a decision in the answer")
 
 
 def _verdict(answer: dict[str, Any]) -> Verdict:
