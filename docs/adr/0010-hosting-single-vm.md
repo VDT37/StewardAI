@@ -1,6 +1,6 @@
 # 0010. Hosting on a single VM
 
-Status: Accepted (2026-10-14)
+Status: Accepted (2026-10-14). Updated 2026-10-29 with the VM as deployed in Phase 3.
 
 ## Context
 
@@ -45,3 +45,23 @@ The laptop with WSL2. Too little memory, and OpenShell on WSL2 is experimental.
 A home server. The product doc allows it, but the plan hosts on AWS credits, and the demo must stay up for judges until 15 Dec.
 
 Nebius AI Cloud compute. There are no AI Cloud credits.
+
+## Update (2026-10-29): the VM as deployed in Phase 3
+
+The public demo and the always-on watcher run on one VM, as decided. What differs from the text above:
+
+- The VM: AWS EC2 t3.xlarge in eu-north-1 (the decision named eu-west-2), Ubuntu 26.04.1 (the decision named 24.04), Elastic IP 13.49.146.96.
+- Caddy v2.11.7, installed from its official apt repository, serves the public demo over HTTPS. The Caddyfile is `deploy/Caddyfile`. The name is `13-49-146-96.sslip.io`, which resolves to the Elastic IP, with a Let's Encrypt certificate that Caddy gets over port 80 and renews itself (issuer Let's Encrypt YE2, valid to 26 Jan 2027 when checked). Plain http is redirected to https. sslip.io is a free third-party DNS name, so the demo depends on it.
+- The demo is a Docker container, `steward-demo`, built from `deploy/demo/Dockerfile`. It has a read-only root, a tmpfs `/tmp`, all capabilities dropped and no-new-privileges, restarts unless stopped, and publishes `127.0.0.1:8100` only. It holds no key, no pass and no owner token.
+- The security group now opens ports 80 and 443, for Caddy only. Port 8000 stays closed: a request from the internet times out. The owner reaches Steward through an SSH tunnel.
+
+| Port | Used by | Exposure |
+| --- | --- | --- |
+| 80, 443 | Caddy | Open to the internet in the security group, for Caddy only |
+| 8100 | Demo container | `127.0.0.1` on the VM, reached by Caddy |
+| 8000 | Steward | Closed in the security group; sandboxes reach it as `host.openshell.internal`, the owner through the SSH tunnel |
+
+- The forward to Hermes (port 8642 in the table above) is a systemd user unit, `deploy/steward-forward.service`. Before, it died whenever the VM stopped and was restarted by hand. The unit runs it in the foreground and restarts it every 10 seconds if it stops.
+- Reboot test, 28 Oct: after `sudo systemctl reboot`, Steward came back healthy, the forward was active and Hermes answered its health check with 200, both sandboxes were Ready, the demo container was running with its two recordings loaded and Caddy was active, all without a manual step.
+- Memory: two live evenings peaked at 2,670 MB and 2,606 MB of the VM's 15.8 GB, so a t3.large (8 GB) would do. The VM is still a t3.xlarge, and the resize is optional.
+- The nightly backup built in Phase 3 copies the SQLite database to `var/backups` on the same VM (03:00, the last 7 kept, live sessions only). It is not the Postgres backup to S3 planned above. An uptime alert, a disk snapshot schedule and an AWS budget alert are not set up yet.

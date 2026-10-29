@@ -6,6 +6,24 @@ Entry format: Date, Product, What happened, What I expected, Suggestion.
 
 ## Entries
 
+- Date: 2026-10-28
+- Product: Nebius Token Factory
+- What happened: The deprecation notice for the two serverless models the agents ran on, `nvidia/nemotron-3-super-120b-a12b` and `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B`, gave 12 days before removal. They leave Serverless on 9 Nov 2026 (https://docs.tokenfactory.nebius.com/model-deprecations-november-2026). There is no automatic reroute to a replacement, and Dedicated Endpoints are available only through sales. The recommended replacements, `nvidia/Nemotron-3.5-Super-VL` and `nvidia/Nemotron-3_5-Lightning`, passed plain, streaming, tools and streaming-with-tools calls in a spike on the same day (`spikes/results/phase3-models.txt`).
+- What I expected: (to fill in)
+- Suggestion: (to fill in)
+
+- Date: 2026-10-28
+- Product: Nebius Token Factory (Nemotron models)
+- What happened: `nvidia/Nemotron-3_5-Lightning` with `reasoning_effort` set to `"none"` returned no reasoning tokens. The morning brief came back with about 166 completion tokens in under a second (765 to 901 ms), which made it a good fit for a short summary that code then checks. Without the setting, the plain call in the spike used 322 reasoning tokens for 332 completion tokens (1277 ms).
+- What I expected: (to fill in)
+- Suggestion: (to fill in)
+
+- Date: 2026-10-28
+- Product: NVIDIA OpenShell 0.1.4
+- What happened: An MCP endpoint cannot share a host and port with an endpoint of another protocol. Steward serves REST and MCP on one port (8000, as `host.openshell.internal:8000`), so `mcp` rules cannot be used as a second wall on top of the `rest` rules for the tool door.
+- What I expected: (to fill in)
+- Suggestion: (to fill in)
+
 - Date: 2026-10-25
 - Product: Tavily Extract API
 - What happened: Extract returns text that a visitor to the page cannot see. I put one marker string in each of eight hiding methods on a test page (https://vdt37.github.io/StewardAI/demo/hiding-test.html) and called extract four times: basic and advanced depth, each as markdown and as text. Text hidden with CSS (`display:none`, `visibility:hidden`, `font-size:0`, off-screen positioning, same colour as the background) and `aria-hidden` text came back in all four combinations. HTML comments and `<noscript>` content did not come back in any of them. `include_usage` reported 0, 0, 0 and 1 credits for the four calls. This matters for Steward because a page's hidden instructions reach an agent through extract, so a gateway cannot rely on the extractor to strip them. Steward treats every extract result as untrusted.
