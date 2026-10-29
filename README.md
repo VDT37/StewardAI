@@ -299,7 +299,7 @@ Open http://localhost:8000/console/ and paste the owner token (`STEWARD_OWNER_TO
 
 https://13-49-146-96.sslip.io shows recorded evenings of the Manchester story. Nothing there calls a model or changes anything. The demo holds no Nebius key, no agent pass and no owner token, and the owner's Steward is not reachable from it.
 
-- Picker: two recordings, a live evening (the real agents on Nemotron 3.5, recorded on the VM) and a scripted evening (the same story with scripted actors and no model). When the demo starts, it replays each recording into its own read-only Steward in memory, so the holds, exchanges, stand-ins, brief and log chain on screen are produced by Steward's own code. The replay matched all 158 decisions of the live recording and all 86 of the scripted one.
+- Picker: two recordings, a live evening (the real agents on Nemotron 3.5, recorded on the VM) and a scripted evening (the same story with scripted actors and no model). When the demo starts, it replays each recording into its own read-only Steward in memory, so the holds, exchanges, stand-ins, brief and log chain on screen are produced by Steward's own code. The replay matched all 156 decisions of the live recording and all 86 of the scripted one.
 - Start here: three steps. What the personal agent said in full (the careless answer, with Dr Shah), what crossed to the work agent (busy, can't move), and why.
 - Playground: edit a reply and see what Steward trims, check an ask, screen an email (the 21:15 phishing email is there to try), or break an approval lock. Nothing is saved and no model is called.
 - Re-run the replay on the server: the Recorder page replays the recording again on the server and says Identical, or names the first decision that differs. One re-run at a time, and a result is kept for 10 minutes.
@@ -387,7 +387,7 @@ Replay downloads the flight-log export from the running Steward, replays the las
 uv run steward scenario manchester --mode replay --recording var/steward-export.jsonl
 ```
 
-A pass shows that Steward's decisions are deterministic. It does not show that the agents would act the same way again. The bundled scripted evening replays with 86 of 86 decisions matching, and the bundled live evening with 158 of 158.
+A pass shows that Steward's decisions are deterministic. It does not show that the agents would act the same way again. The bundled scripted evening replays with 86 of 86 decisions matching, and the bundled live evening (run 8) with 156 of 156.
 
 ## Trap suite
 
