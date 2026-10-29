@@ -38,6 +38,20 @@ export function day(value: string): string {
   })
 }
 
+const MODEL_NAMES: Record<string, string> = {
+  'nvidia/Nemotron-3.5-Super-VL': 'Nemotron 3.5 Super VL',
+  'nvidia/Nemotron-3_5-Lightning': 'Nemotron 3.5 Lightning',
+  'nvidia/nemotron-3-super-120b-a12b': 'Nemotron 3 Super',
+  'nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B': 'Nemotron 3 Nano',
+  'nvidia/Nemotron-3-Ultra-550b-a55b': 'Nemotron 3 Ultra',
+}
+
+// "Nemotron 3.5 Lightning" from "nvidia/Nemotron-3_5-Lightning".
+export function modelName(id: string | null | undefined): string {
+  if (!id) return 'none'
+  return MODEL_NAMES[id] ?? id.split('/').pop() ?? id
+}
+
 export function usd(value: string): string {
   const amount = Number(value)
   return amount < 0.01 && amount > 0 ? `$${amount.toFixed(4)}` : `$${amount.toFixed(2)}`
@@ -72,6 +86,8 @@ export function callPhrase(tool: string, args: Payload = {}): string {
     case 'mail_read_message':
     case 'gmail_read_message':
       return `read the email ${str(args.id)}`
+    case 'mail_report_message':
+      return `report the email ${str(args.id)} as phishing`
     case 'mail_send_message':
       return `email ${str(args.to)}: "${str(args.subject)}"`
     case 'todo_list_items':
@@ -155,6 +171,11 @@ const RULES: Record<string, string> = {
   invalid_reply: 'Reply did not fit the type',
   invalid_call: 'Call could not be checked',
   checker_error: 'Checker failed, held',
+  runaway_loop: 'Same call over and over',
+  refusal_storm: 'Too many refused calls',
+  model_call_rate: 'Too many model calls',
+  phishing_link: 'Link from a suspected phishing email',
+  phishing_screen: 'Suspected phishing',
   request_ok: 'Allowed',
   allowed: 'Allowed',
 }
@@ -166,6 +187,7 @@ export function ruleLabel(rule: string | undefined | null): string {
 
 const CHANGES: Record<string, string> = {
   'chg-user-asks-for-trip': 'You asked the work agent to plan the Manchester visit',
+  'chg-phishing-arrives': 'A "New Email Notification" phishing email arrived in the work mailbox',
   'chg-poisoned-email-arrives': 'A lookalike client email arrived in the work mailbox',
   'chg-blood-test-added': 'A blood test appeared on your personal calendar',
 }
@@ -329,6 +351,53 @@ export function describe(event: LogEvent): Line {
       return { actor: 'You', text: `Suspended the ${str(p.agent)} agent's pass`, outcome: 'owner' }
     case 'admin.pass_resumed':
       return { actor: 'You', text: `Resumed the ${str(p.agent)} agent's pass`, outcome: 'owner' }
+    case 'admin.pass_revoked':
+      return { actor: 'You', text: `Revoked the ${str(p.agent)} agent's pass`, outcome: 'owner' }
+    case 'admin.revocation_lifted':
+      return { actor: 'Steward', text: `A new pass lifted the revocation of the ${str(p.agent)} agent`, outcome: 'note' }
+    case 'admin.tool_off':
+      return { actor: 'You', text: `Turned ${str(p.tool)} off for the ${str(p.agent)} agent`, outcome: 'owner' }
+    case 'admin.tool_on':
+      return { actor: 'You', text: `Turned ${str(p.tool)} back on for the ${str(p.agent)} agent`, outcome: 'owner' }
+    case 'admin.run_stopped':
+      return { actor: 'Steward', text: `Stopped the agent's run in progress (${str(p.run_id)})`, outcome: 'note' }
+    case 'watcher.paused':
+      return { actor: 'Steward', text: `The watcher paused the ${str(p.agent)} agent: ${str(p.detail)}`, outcome: 'refused', rule }
+    case 'mail.screened': {
+      const links = Array.isArray(p.links) ? p.links.length : 0
+      const withheld = p.released_by_owner ? 'you released its links' : `${links} link${links === 1 ? '' : 's'} withheld`
+      return {
+        actor: 'Steward',
+        text: `Screened "${str(p.subject)}" from ${str(p.sender_domain)}: suspected phishing, ${withheld}${p.hidden_text && (p.hidden_text as unknown[]).length ? ', hidden text removed' : ''}`,
+        outcome: 'trimmed',
+        rule: 'phishing_screen',
+      }
+    }
+    case 'mail.verdict':
+      return {
+        actor: 'You',
+        text: `Marked the email ${str(p.message_id)} as ${p.verdict === 'phishing' ? 'phishing' : 'not phishing'}`,
+        outcome: 'owner',
+      }
+    case 'scheduler.run':
+      return { actor: 'Steward', text: `Ran the ${str(p.job)} job due at ${when(str(p.due))}`, outcome: 'note' }
+    case 'brief.facts':
+      return { actor: 'Steward', text: 'Picked the facts for the morning brief, in code', outcome: 'note' }
+    case 'brief.written':
+      return {
+        actor: 'Steward',
+        text:
+          p.source === 'model'
+            ? `Wrote the morning brief with ${str(p.model).split('/').pop()}, checked by code`
+            : 'Wrote the morning brief from the template',
+        outcome: 'note',
+      }
+    case 'helper.call':
+      return {
+        actor: 'Steward',
+        text: `Brief writer call to ${str(p.model).split('/').pop()}: ${p.error ? str(p.error) : `$${str(p.cost_usd)}`}`,
+        outcome: 'note',
+      }
     case 'tool.pinned':
       return { actor: 'Steward', text: `Pinned the tool ${str(p.tool_id)}`, outcome: 'note' }
     case 'tool.pin_mismatch':
@@ -356,6 +425,10 @@ const QUIET = new Set([
   'system.clock',
   'system.start',
   'system.stop',
+  'scheduler.run',
+  'brief.baselines',
+  'helper.call',
+  'backup.done',
 ])
 
 export function isDecision(event: LogEvent): boolean {

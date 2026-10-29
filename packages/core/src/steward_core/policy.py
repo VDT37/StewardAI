@@ -6,6 +6,11 @@ holds its pass; the pass itself lives only in .env.
 Every upstream tool on a pass needs a class in the tools section (Phase 2). Classes come from
 this file, not from MCP annotations, because the MCP specification says to treat annotations as
 untrusted hints. A tool without a class fails the load, so nothing reaches an agent unclassed.
+
+Phase 3 adds optional sections: mail screening per tool (screen: mail), the watcher's hard
+limits, the helper model that writes the morning brief, the brief's time and the nightly backup.
+Each one is off when its section is missing, so a recording made under an older policy (the
+policy travels inside the recording) replays exactly as it ran.
 """
 
 from __future__ import annotations
@@ -117,6 +122,8 @@ class ToolRule(_Config):
     # spend: tool Steward calls with {} to list bookings already made (for the trip total).
     ledger_tool: str | None = None
     versioned: Versioned | None = None
+    # Phase 3: "mail" screens each message the tool returns for phishing (steward_core.phishing).
+    screen: Literal["mail"] | None = None
 
     @property
     def is_egress(self) -> bool:
@@ -164,6 +171,64 @@ class HoldSettings(_Config):
     notify_classes: tuple[ToolClass, ...] = ("change_paid",)
 
 
+class WatcherSettings(_Config):
+    """Hard limits checked on every flight-log event. Crossing one pauses the agent (its pass
+    is suspended) until the owner resumes it. Only these limits pause; baselines only report."""
+
+    # The same tool with the same arguments this many times within the window: a runaway loop.
+    same_call_max: int = Field(default=10, gt=1)
+    same_call_minutes: float = Field(default=5, gt=0)
+    # Refused or denied calls (tools, asks, passes) within the window: a storm of refusals.
+    refusals_max: int = Field(default=8, gt=1)
+    refusals_minutes: float = Field(default=10, gt=0)
+    # Model calls within one minute.
+    model_calls_per_minute: int = Field(default=60, gt=1)
+    # The brief warns when an agent has used this share of its daily budget.
+    spend_warn_percent: int = Field(default=80, gt=0, le=100)
+
+
+class HelperSettings(_Config):
+    """Steward's own helper model: it writes the morning brief and never decides anything."""
+
+    model: str
+    budget_usd_per_day: Decimal = Field(ge=0)
+    timeout_s: float = Field(default=30, gt=0)
+    max_tokens: int = Field(default=400, gt=0, le=4000)
+    # Sent as reasoning_effort; "none" switched Lightning's reasoning off in the Part A check.
+    reasoning_effort: str | None = "none"
+
+
+class BriefSettings(_Config):
+    # Europe/London time of the morning brief, on Steward's clock (story time in a scenario).
+    at: str = "07:30"
+    # The model's summary is replaced by the template when longer than this.
+    max_chars: int = Field(default=900, gt=100)
+    # Quiet hours, from this time until the brief: a call held then sends no Telegram card, and
+    # the brief asks about it instead. None sends every card at once.
+    quiet_from: str | None = "22:00"
+
+    @field_validator("at", "quiet_from")
+    @classmethod
+    def _hhmm(cls, value: str | None) -> str | None:
+        if value is not None and not re.match(r"^(?:[01]\d|2[0-3]):[0-5]\d$", value):
+            raise ValueError("times must be HH:MM")
+        return value
+
+
+class BackupSettings(_Config):
+    # Europe/London time of the nightly copy of the database (live sessions only).
+    at: str = "03:00"
+    keep: int = Field(default=7, gt=0, le=60)
+    directory: str = "var/backups"
+
+    @field_validator("at")
+    @classmethod
+    def _hhmm(cls, value: str) -> str:
+        if not re.match(r"^(?:[01]\d|2[0-3]):[0-5]\d$", value):
+            raise ValueError("at must be HH:MM")
+        return value
+
+
 class Policy(_Config):
     agents: dict[str, AgentPolicy]
     contacts: tuple[ContactRule, ...] = ()
@@ -178,6 +243,10 @@ class Policy(_Config):
     checker_timeout_s: float = Field(default=10, gt=0)
     a2a: A2ASettings = A2ASettings()
     holds: HoldSettings = HoldSettings()
+    watcher: WatcherSettings | None = None
+    helper: HelperSettings | None = None
+    brief: BriefSettings | None = None
+    backup: BackupSettings | None = None
 
     @model_validator(mode="after")
     def _consistent(self) -> Policy:
@@ -191,7 +260,10 @@ class Policy(_Config):
         envs = [a.pass_env for a in self.agents.values()]
         if len(set(envs)) != len(envs):
             raise ValueError("each agent needs its own pass_env")
-        missing = sorted({a.model for a in self.agents.values()} - set(self.prices))
+        models = {a.model for a in self.agents.values()}
+        if self.helper is not None:
+            models.add(self.helper.model)
+        missing = sorted(models - set(self.prices))
         if missing:
             raise ValueError(f"no price for models: {missing}")
         if any(not entry for entry in self.mask):
@@ -199,6 +271,8 @@ class Policy(_Config):
         unclassed = sorted({t for a in self.agents.values() for t in a.tools} - set(self.tools))
         if unclassed:
             raise ValueError(f"tools on a pass need a class in the tools section: {unclassed}")
+        if self.brief is not None and self.helper is None:
+            raise ValueError("the brief section needs a helper section (the model that writes it)")
         for tool_id, tool_rule in self.tools.items():
             if not TOOL_ID.match(tool_id):
                 raise ValueError(f"tools keys must look like server.tool: {tool_id}")

@@ -1,5 +1,6 @@
 // Typed client for Steward's admin API. The types mirror the JSON that
-// apps/gateway/src/steward_gateway/admin.py returns.
+// apps/gateway/src/steward_gateway/admin.py returns. In the public demo the same calls go to one
+// recording's replayed Steward at /r/<name> (read-only), and /demo/* holds the demo's own routes.
 
 export type Door = 'model' | 'tool' | 'a2a' | 'auth' | 'admin' | 'system'
 
@@ -24,7 +25,8 @@ export type Flags = {
 export type AgentSummary = {
   id: string
   model: string
-  pass: 'active' | 'suspended'
+  pass: 'active' | 'suspended' | 'revoked'
+  tools_off: string[]
   tools: number
   spend_today_usd: string
   budget_usd_per_day: string
@@ -37,7 +39,7 @@ export type AgentSummary = {
 export type AgentTool = {
   name: string
   tool_id: string
-  state: 'pinned' | 'mismatch' | 'missing' | 'built-in'
+  state: 'pinned' | 'mismatch' | 'missing' | 'built-in' | 'off'
   fingerprint?: string | null
   pinned?: string | null
   tool_class?: string | null
@@ -84,6 +86,9 @@ export type Status = {
   web_backend: string
   telegram: boolean
   scenario: ScenarioState | null
+  mode: 'owner' | 'demo'
+  models: Record<string, string | null>
+  brief_at: string | null
 }
 
 export type Choice = { id: string; label: string }
@@ -92,7 +97,7 @@ export type Hold = {
   hold_id: string
   session_id: string
   agent: string
-  kind: 'tool' | 'ask' | 'address'
+  kind: 'tool' | 'ask' | 'address' | 'pause'
   tool: string
   tool_id: string | null
   args: Record<string, unknown>
@@ -110,6 +115,8 @@ export type Hold = {
   result: Record<string, unknown> | null
   decided: string | null
   tool_class: string | null
+  // What started the agent's run, from Steward's records (waiting holds only).
+  prompted_by?: string | null
 }
 
 export type Exchange = {
@@ -197,6 +204,101 @@ export type PolicyView = {
   holds: { expires_hours: number; link_minutes: number; stand_in_hours: number }
 }
 
+export type QuestionHold = {
+  hold_id: string
+  fingerprint: string
+  tool: string
+  choices: [string, string][]
+  state: string
+}
+
+export type Brief = {
+  state?: 'none'
+  brief_id: string
+  ts: string
+  session_id: string
+  text: string
+  summary: string
+  source: 'model' | 'template'
+  model: string | null
+  problems: string[] | null
+  facts: Record<string, unknown>
+  question: {
+    kind: string
+    text: string
+    approve: string
+    deny: string
+    holds: QuestionHold[]
+  } | null
+}
+
+export type MailItem = {
+  message_id: string
+  subject: string
+  sender_domain: string
+  signs: string[]
+  reasons: string[]
+  links: { url: string; text: string; host: string }[]
+  hidden_text: string[]
+  score: number
+  first_seen: string
+  agent: string
+  reads: number
+  verdict: 'phishing' | 'not_phishing' | null
+  reported_by_agent: boolean
+}
+
+export type WatcherPause = { ts: string; agent: string; rule: string; detail: string; hold_id: string }
+
+export type WatcherState = {
+  on: boolean
+  limits: Record<string, number> | null
+  agents: Record<string, { pass: 'active' | 'paused' | 'revoked'; tools_off: string[] }>
+  pauses: WatcherPause[]
+  baselines: { agent: string; metric: string; value: number; median: number | null; verdict: string }[]
+}
+
+export type DemoRecording = {
+  name: string
+  label: string
+  kind: 'live' | 'scripted'
+  session_id: string
+  recorded_on: string | null
+  events: number
+  models_used: Record<string, string[]>
+  models_set: Record<string, string | null>
+  brief: { source: string; model: string | null; problems: string[] | null } | null
+  beats: { ts: string; beat: string; actor: string }[]
+  replay: ReplayResult | null
+  rerun: ReplayResult | null
+}
+
+export type ReplyExample = {
+  request_type: string
+  request: Record<string, unknown>
+  reply: unknown
+  recording: string
+}
+
+export type DemoInfo = {
+  mode: 'demo'
+  default: string | null
+  recordings: DemoRecording[]
+  examples: {
+    reply: ReplyExample[]
+    ask: { request_type: string; fields: unknown }[]
+    mail: { from: string; subject: string; body: string; body_html: string } | null
+    lock: {
+      hold: { agent: string; tool: string; args: Record<string, unknown>; hold_id: string }
+      fingerprint: string
+      recording: string
+    } | null
+  }
+  limits: { body_bytes: number; posts_per_minute: number; replay_cache_s: number }
+}
+
+export type CheckResult = Record<string, unknown> & { kind: string }
+
 export class Unauthorized extends Error {}
 
 export function isAuthError(error: unknown): boolean {
@@ -204,6 +306,13 @@ export function isAuthError(error: unknown): boolean {
 }
 
 const TOKEN_KEY = 'steward-owner-token'
+
+// '' for the owner's Steward; '/r/<recording>' for one recording in the public demo.
+let base = ''
+
+export function setBase(prefix: string): void {
+  base = prefix
+}
 
 export function savedToken(): string | null {
   return sessionStorage.getItem(TOKEN_KEY)
@@ -223,7 +332,7 @@ export class ApiError extends Error {
 }
 
 async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(path, {
+  const response = await fetch(path.startsWith('/admin') ? base + path : path, {
     ...init,
     headers: {
       ...init.headers,
@@ -281,8 +390,26 @@ export const api = {
   resetClock: () => call<ClockInfo>('/admin/clock', { method: 'DELETE' }),
   runScenario: (approvals: 'scripted' | 'manual') =>
     post<ScenarioState>('/admin/scenario/run', { name: 'manchester', approvals, speed: 60 }),
+  revoke: (id: string) => post<AgentSummary>(`/admin/agents/${enc(id)}/revoke`),
+  tool: (id: string, tool: string, on: boolean) =>
+    post<AgentSummary>(`/admin/agents/${enc(id)}/tools/${enc(tool)}/${on ? 'on' : 'off'}`),
+  brief: () => call<Brief>('/admin/brief'),
+  runBrief: () => post<Brief>('/admin/brief/run'),
+  answerBrief: (briefId: string, choice: 'approve' | 'deny') =>
+    post<{ outcomes: { hold_id: string; state?: string; error?: string }[] }>('/admin/brief/answer', {
+      brief_id: briefId,
+      choice,
+    }),
+  mail: () => call<MailItem[]>('/admin/mail'),
+  mailVerdict: (messageId: string, verdict: 'phishing' | 'not_phishing') =>
+    post<unknown>(`/admin/mail/${enc(messageId)}/verdict`, { verdict }),
+  watcher: () => call<WatcherState>('/admin/watcher'),
+  demoInfo: () => call<DemoInfo>('/demo/info'),
+  demoReplay: (recording: string) =>
+    post<ReplayResult & { cached?: boolean; ran_at?: string }>('/demo/replay', { recording }),
+  demoCheck: (body: Record<string, unknown>) => post<CheckResult>('/demo/check', body),
   exportLog: async (): Promise<Blob> => {
-    const response = await fetch('/admin/log/export.jsonl', {
+    const response = await fetch(`${base}/admin/log/export.jsonl`, {
       headers: { Authorization: `Bearer ${savedToken() ?? ''}` },
     })
     if (response.status === 401) throw new Unauthorized('owner token required')
@@ -297,7 +424,7 @@ export async function followLog(
   onEvent: (event: LogEvent) => void,
   signal: AbortSignal,
 ): Promise<void> {
-  const response = await fetch(`/admin/log/stream?after_seq=${afterSeq}`, {
+  const response = await fetch(`${base}/admin/log/stream?after_seq=${afterSeq}`, {
     headers: { Authorization: `Bearer ${savedToken() ?? ''}` },
     signal,
   })

@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { api, followLog, type LogEvent } from '../api'
 import { isDecision } from '../format'
 import { type OnError } from '../hooks'
+import { useMode } from '../mode'
 import { EventLine, PageTitle, Panel } from '../ui'
 
 const WHO = [
@@ -24,6 +25,7 @@ function Beat({ event }: { event: LogEvent }) {
 }
 
 export function ActivityPage({ onError }: { onError: OnError }) {
+  const { demo } = useMode()
   const [events, setEvents] = useState<LogEvent[]>([])
   const [live, setLive] = useState(false)
   const [agent, setAgent] = useState('')
@@ -35,6 +37,8 @@ export function ActivityPage({ onError }: { onError: OnError }) {
     api.log({ limit: 500 }).then((initial) => {
       if (stopped) return
       setEvents(initial)
+      // A recording does not change: nothing to follow.
+      if (demo) return
       const after = initial.length ? initial[0].seq : 0
       setLive(true)
       followLog(
@@ -51,7 +55,7 @@ export function ActivityPage({ onError }: { onError: OnError }) {
       stopped = true
       controller.abort()
     }
-  }, [onError])
+  }, [onError, demo])
 
   const shown = useMemo(
     () =>
@@ -72,7 +76,7 @@ export function ActivityPage({ onError }: { onError: OnError }) {
       <Panel>
         <div className="mb-2 flex flex-wrap items-center gap-3">
           <span className={live ? 'font-bold text-personal' : 'text-muted'}>
-            {live ? 'Live' : 'Not connected'}
+            {demo ? 'Recorded evening' : live ? 'Live' : 'Not connected'}
           </span>
           <div className="flex flex-wrap gap-1" role="group" aria-label="Show events for">
             {WHO.map(([value, label]) => (

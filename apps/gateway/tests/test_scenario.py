@@ -3,6 +3,7 @@
 import asyncio
 import datetime as dt
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -11,8 +12,9 @@ from gateway_helpers import ScriptedHermes, call, chatty_personal, running, stor
 
 from steward_fixtures import find_planted
 from steward_gateway.admin import AdminContext
+from steward_gateway.prompted import prompted_by
 from steward_gateway.replay import pick_session, replay_events
-from steward_gateway.scenario import run_manchester
+from steward_gateway.scenario import Runner, run_manchester
 from steward_gateway.tool_door import Catalogue
 
 
@@ -76,12 +78,89 @@ def test_manchester_evening_runs_and_replays_identically(tmp_path: Path) -> None
     trains = [b for b in ctx.world.bookings.values() if b["kind"] == "train"]
     taxis = [b for b in ctx.world.bookings.values() if b["kind"] == "taxi"]
     assert trains[0]["depart"] == "11:30" and taxis[0]["pickup_time"] == "11:00"
+    # 21:15 and 22:40: both attack mails are screened; the phish is reported and its link was
+    # never shown, and the 22:40 hidden instruction never reached the agent.
+    screened = {e["payload"]["message_id"] for e in events if e["kind"] == "mail.screened"}
+    assert screened == {"w-msg-phishing-verify", "w-msg-poisoned-agenda"}
+    assert "w-msg-phishing-verify" in ctx.world.reported
+    assert not any("mailbox-verify.example" in text for text in hermes.seen)
+    assert not any("ASSISTANT INSTRUCTION" in text for text in hermes.seen)
+    # 07:30: the brief nobody asked for, from code-picked facts, with one question about the
+    # trip's two paid changes; the story never trips a hard limit.
+    assert first("scheduler.run", job="brief")
+    facts = first("brief.facts")["payload"]["facts"]
+    assert facts["question"]["kind"] == "change_paid" and len(facts["question"]["holds"]) == 2
+    assert not find_planted(json.dumps(facts), side="personal")
+    assert first("brief.written")["payload"]["source"] in {"model", "template"}
+    assert "watcher.paused" not in kinds
+
+    # Each held call's card says what started the agent's run, from Steward's own records.
+    def prompted(rule: str) -> str:
+        hold = next(h for h in ctx.store.holds(state=None) if h.rule == rule)
+        return prompted_by(ctx, hold) or ""
+
+    assert prompted("trifecta").startswith('Your request at 19:00: "Plan a client visit')
+    assert prompted("paid_change_needs_owner").startswith(
+        "Steward's change notice at 23:30 (Thu 15 Oct, 09:00 to 10:30, now busy)"
+    )
+    # attacks="agent": the scripted Hermes falls for the 22:40 email in the run "New mail" started.
+    assert prompted("daily_limit").startswith('Your request at 22:40: "New mail')
+    assert prompted("stale_write").startswith("The overnight script at 01:30")
     # Nothing private ever reached the work agent.
     for text in hermes.seen:
         assert not find_planted(text, side="personal"), text
     # And the replay makes the same decisions, byte for byte.
     assert result["ok"], result
     assert result["compared"] >= 70 and result["compared"] == result["recorded_decisions"]
+
+
+def test_owner_first_takes_the_scripted_decision_once_the_owner_had_their_chance(
+    tmp_path: Path,
+) -> None:
+    """approvals="owner-first": nobody decides within the wait, so the scripted decisions run,
+    the evening ends as the scripted one does, and it still replays identically."""
+    hermes = ScriptedHermes()
+
+    async def scenario() -> tuple[AdminContext, list[dict[str, Any]], dict[str, Any]]:
+        async with running(tmp_path, chatty_personal, work=hermes) as (_, ctx, _):
+            await run_manchester(ctx, "owner-first", 0, "agent", owner_wait_s=0.05)
+            for _ in range(20):
+                await asyncio.sleep(0.01)
+            lines = [json.loads(line) for line in ctx.store.export_lines()]
+            events = pick_session(lines, None)
+            return ctx, events, await replay_events(events)
+
+    ctx, events, result = asyncio.run(scenario())
+    assert ctx.scenario["state"] == "done", ctx.scenario
+    waits = [e for e in events if e["payload"].get("mode") == "owner-first"]
+    assert [e["payload"]["beat"] for e in waits] == ["19:06 approvals", "07:35 approvals"]
+    executed = [e["payload"]["tool"] for e in events if e["kind"] == "intent.executed"]
+    assert executed == ["travel_book_train", "travel_change_booking", "travel_change_booking"]
+    start = next(e for e in events if e["kind"] == "scenario.start")
+    assert start["payload"]["real_time"] is False
+    assert result["ok"], result["first_difference"]
+
+
+def test_a_real_time_run_never_cuts_a_quiet_gap_short(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fast-forward caps every quiet gap (MAX_GAP_S); real time waits the whole gap."""
+    monkeypatch.setattr("steward_gateway.scenario.MAX_GAP_S", 0.01)
+
+    async def gap_seconds(real_time: bool) -> tuple[float, float]:
+        async with running(tmp_path / str(real_time), chatty_personal) as (_, ctx, _):
+            runner = Runner(ctx, "scripted", 1.0, "agent", real_time=real_time)
+            start = ctx.clock.now()
+            began = time.monotonic()
+            await runner.advance_to(start + dt.timedelta(seconds=0.3))
+            return time.monotonic() - began, (ctx.clock.now() - start).total_seconds()
+
+    fast_wall, fast_story = asyncio.run(gap_seconds(False))
+    real_wall, real_story = asyncio.run(gap_seconds(True))
+    # Both land on the beat's time; only real time spends the whole gap waiting for it.
+    assert fast_story >= 0.3 and real_story >= 0.3
+    assert fast_wall < 0.2
+    assert real_wall >= 0.29
 
 
 def test_replay_matches_even_when_upstream_calls_are_slow(
@@ -133,3 +212,19 @@ def test_a_hold_that_expires_while_the_owner_looks_replays(tmp_path: Path) -> No
 
     result = asyncio.run(scenario())
     assert result["ok"], result["first_difference"]
+
+
+def test_the_demo_night_lands_each_beat_on_the_wall_clock() -> None:
+    from steward_core.clock import LONDON
+    from steward_gateway.scenario import DEMO_NIGHT, wall_time
+
+    def london(day: int, hhmm: str) -> dt.datetime:
+        hours, minutes = (int(x) for x in hhmm.split(":"))
+        return dt.datetime(2026, 10, day, hours, minutes, tzinfo=LONDON)
+
+    # Later the same evening, after midnight (the next day), and a beat the run is late for.
+    assert wall_time("19:40", london(29, "19:30")) == london(29, "19:40")
+    assert wall_time("00:30", london(29, "23:50")) == london(30, "00:30")
+    assert wall_time("19:40", london(29, "19:45")) == london(29, "19:45")
+    # The night's beats fall while the story's owner sleeps, and the brief comes at 03:30.
+    assert DEMO_NIGHT["22:40"] == "23:45" and DEMO_NIGHT["07:30"] == "03:30"

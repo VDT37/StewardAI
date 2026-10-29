@@ -1,0 +1,31 @@
+id: visitor-cannot-change-the-demo
+category: Public demo
+title: In the public demo a visitor can read but cannot decide, pause or reach an agent's door
+mode: demo
+steps:
+- visitor:
+    method: GET
+    path: /admin/status
+  expect: 200
+- visitor:
+    method: POST
+    path: /admin/agents/work/suspend
+  expect: 403
+- visitor:
+    method: POST
+    path: /admin/holds/h-000000000000/decide
+  expect: 403
+- visitor:
+    method: POST
+    path: /admin/brief/run
+  expect: 403
+- visitor:
+    method: POST
+    path: /v1/chat/completions
+  expect: 404
+- visitor:
+    method: POST
+    path: /tools/work/mcp
+  expect: 404
+- check:
+    not_paused: work

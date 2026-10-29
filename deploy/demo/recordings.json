@@ -1,0 +1,18 @@
+{
+  "recordings": [
+    {
+      "name": "live",
+      "file": "live.jsonl",
+      "label": "Live evening: real agents on Nemotron 3.5",
+      "kind": "live",
+      "session_id": "s-20261029-075358-e1f8"
+    },
+    {
+      "name": "scripted",
+      "file": "scripted.jsonl",
+      "label": "Scripted evening: the same story, no model",
+      "kind": "scripted",
+      "session_id": "s-20261028-221303-b511"
+    }
+  ]
+}

@@ -114,8 +114,44 @@ def test_telegram_presses_decide_only_for_the_owner(tmp_path: Path) -> None:
     html, stranger, owner, again, expired, state = asyncio.run(scenario())
     # The card escapes what the agent wrote, so it cannot inject Telegram HTML.
     assert "&lt;b&gt;then&lt;/b&gt; &amp; after" in html and "<b>then</b>" not in html
-    assert "Locked to:" in html
+    assert "Locked to" in html and "<b>Why</b>" in html
+    # The choices are the buttons; the card does not repeat them.
+    assert "Choices:" not in html
+    shown = card_html(hold_for_card(), "Steward's change notice at 23:30, which started this run.")
+    assert "<b>Prompted by</b>\nSteward&#x27;s change notice at 23:30" in shown
     assert stranger == "Not allowed."
     assert owner == "Done: the hold is now denied." and state == "denied"
     assert again.startswith("This button has expired")
     assert expired.startswith("This button has expired")
+
+
+def test_request_urls_with_the_bot_token_are_not_logged() -> None:
+    """The Bot API puts the token in the URL; httpx must not log request URLs at INFO."""
+    import logging
+
+    import steward_gateway.telegram_cards  # noqa: F401
+
+    assert not logging.getLogger("httpx").isEnabledFor(logging.INFO)
+
+
+def hold_for_card() -> Any:
+    from steward_core.store import Hold
+
+    return Hold(
+        hold_id="h-1",
+        session_id="s-1",
+        agent="work",
+        kind="tool",
+        tool="travel_change_booking",
+        tool_id="travel.change_booking",
+        args={"booking_id": "bk-1", "option_id": "train-1130"},
+        fingerprint="f" * 64,
+        rule="paid_change_needs_owner",
+        rules=["paid_change_needs_owner"],
+        reason="changing a paid booking always needs you",
+        details={},
+        choices=[{"id": "approve", "label": "Allow once"}, {"id": "deny", "label": "Deny"}],
+        state="pending",
+        created="2026-10-11T22:30:09.000Z",
+        expires="2026-10-12T10:30:09.000Z",
+    )

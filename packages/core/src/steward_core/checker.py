@@ -2,8 +2,9 @@
 
 A checker looks at an ask before it is forwarded and at a reply before it crosses, and returns
 a verdict: allow, refuse or hold, plus the rule that fired. FailClosed wraps any checker so an
-error or a timeout becomes a hold, never an allow. Jev and the Nemotron judge are stubs until
-the Phase 4 comparison.
+error or a timeout becomes a hold, never an allow. Jev is a stub (cut from the comparison). The
+Nemotron judge of the Phase 4 comparison is steward_gateway.judge.NemotronJudge, because it needs
+an HTTP client; the stub here only makes a policy that selects it fail closed.
 
 Phase 2: asks over the daily limit or in a burst, and every address request, are held for the
 owner instead of refused, and every request type in request_types goes through the same checks.
@@ -231,7 +232,7 @@ class JevChecker:
 
 
 class NemotronJudgeChecker:
-    """Phase 4 comparison arm: Nemotron judges each request and reply. Not built yet."""
+    """Selected by policy, this fails closed: the comparison's judge is steward_gateway.judge."""
 
     name = "nemotron-judge"
 

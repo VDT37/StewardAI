@@ -74,7 +74,12 @@ def mail_server(name: str, side: Side, world: World) -> MCPServer:
 
     @server.tool(description="List the messages in the mailbox, oldest first, without bodies.")
     def list_messages() -> dict[str, Any]:
-        return {"messages": [message_summary(m) for m in world.messages(side)]}
+        return {
+            "messages": [
+                {**message_summary(m), "reported": m.id in world.reported}
+                for m in world.messages(side)
+            ]
+        }
 
     @server.tool(description="Read one message by its id, including the body.")
     def read_message(id: str) -> dict[str, Any]:
@@ -82,6 +87,7 @@ def mail_server(name: str, side: Side, world: World) -> MCPServer:
             if message.id == id:
                 return {
                     **message_summary(message),
+                    "reported": message.id in world.reported,
                     "to": message.to,
                     "body": message.body,
                     "body_html": message.body_html,
@@ -95,6 +101,16 @@ def mail_server(name: str, side: Side, world: World) -> MCPServer:
             if "@" not in to:
                 raise ToolError("to must be an email address")
             return {"sent": world.send(to, subject, body)}
+
+        @server.tool(
+            description=(
+                "Report a message as phishing or spam, like a mail client's Report button. "
+                "reason says briefly why. Use it for mail that asks you to verify an account, "
+                "sign in, act before a deadline or open a link from an unknown sender."
+            )
+        )
+        def report_message(id: str, reason: str) -> dict[str, Any]:
+            return {"reported": world.report(side, id, reason)}
 
     return server
 

@@ -1,8 +1,12 @@
 """The steward command (Phase 2 Part F).
 
-    steward scenario manchester --mode live [--approvals scripted|manual] [--speed 60]
+    steward scenario manchester --mode live [--approvals scripted|manual|owner-first]
+        [--speed 60 | --real-time | --demo-night] [--owner-wait-min 15]
     steward scenario manchester --mode replay [--recording FILE | --from-server] [--session ID]
     steward replay FILE [--session ID]
+    steward demo record-scripted [--out FILE]
+    steward demo bundle --export FILE [--session ID] --name NAME --label TEXT --kind live|scripted
+    steward demo serve [--dir deploy/demo] [--port 8100]
 
 Live mode asks the running Steward (owner token from STEWARD_OWNER_TOKEN) to play the evening,
 then follows the flight log and prints each beat and decision until the run ends. Replay needs
@@ -112,12 +116,22 @@ async def live(args: argparse.Namespace) -> int:
                 "approvals": args.approvals,
                 "speed": args.speed,
                 "attacks": args.attacks,
+                "real_time": args.real_time,
+                "owner_wait_min": args.owner_wait_min,
+                "plan": "demo-night" if args.demo_night else None,
             },
         )
         if response.status_code >= 400:
             print(f"could not start: HTTP {response.status_code} {response.text}", file=sys.stderr)
             return 2
-    print(f"scenario {args.name} started (approvals {args.approvals}, speed {args.speed})")
+    pace = (
+        "the demo night plan"
+        if args.demo_night
+        else "real time"
+        if args.real_time
+        else f"speed {args.speed}"
+    )
+    print(f"scenario {args.name} started (approvals {args.approvals}, {pace})")
     return await follow(args.base_url, token, after)
 
 
@@ -153,6 +167,89 @@ async def replay(args: argparse.Namespace) -> int:
     return 1
 
 
+async def record_scripted(args: argparse.Namespace) -> int:
+    from steward_gateway.scripted import record_scripted as play
+
+    events = await play()
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("".join(json.dumps(e) + "\n" for e in events), encoding="utf-8")
+    print(f"scripted evening recorded: {len(events)} events, session {events[0]['session_id']}")
+    print(f"saved to {out}")
+    return 0
+
+
+async def bundle(args: argparse.Namespace) -> int:
+    """Add one session of an export to the public demo, after a secret scan and a replay."""
+    from steward_gateway.demo import MANIFEST, NAME, secret_problems
+
+    if not NAME.match(args.name):
+        sys.exit("--name: lower-case letters, digits and dashes, at most 40")
+    source = Path(args.export)
+    events = pick_session(load_recording(source), args.session)
+    session = str(events[0]["session_id"])
+    lines = [
+        line
+        for line in source.read_text(encoding="utf-8").splitlines()
+        if line.strip() and json.loads(line)["session_id"] == session
+    ]
+    text = "\n".join(lines) + "\n"
+    problems = secret_problems(text, os.environ)
+    if problems:
+        print("refused: the recording " + "; ".join(problems), file=sys.stderr)
+        return 1
+    result = await replay_events(events)
+    if not result["ok"]:
+        print(
+            f"refused: the replay of session {session} fails at decision "
+            f"{result['first_difference']['index']}",
+            file=sys.stderr,
+        )
+        return 1
+    folder = Path(args.dir)
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / f"{args.name}.jsonl").write_text(text, encoding="utf-8", newline="\n")
+    manifest_path = folder / MANIFEST
+    manifest = (
+        json.loads(manifest_path.read_text(encoding="utf-8"))
+        if manifest_path.is_file()
+        else {"recordings": []}
+    )
+    entry = {
+        "name": args.name,
+        "file": f"{args.name}.jsonl",
+        "label": args.label,
+        "kind": args.kind,
+        "session_id": session,
+    }
+    entries = [e for e in manifest["recordings"] if e["name"] != args.name]
+    position = next(
+        (i for i, e in enumerate(manifest["recordings"]) if e["name"] == args.name), len(entries)
+    )
+    entries.insert(position, entry)
+    manifest["recordings"] = entries
+    manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8", newline="\n")
+    print(
+        f"bundled {args.name}: session {session}, {len(lines)} events, replay PASS "
+        f"({result['compared']} decisions)"
+    )
+    return 0
+
+
+def serve(args: argparse.Namespace) -> int:
+    import logging
+
+    import uvicorn
+
+    from steward_gateway.demo import create_demo_app
+
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    console = Path(args.console)
+    server = create_demo_app(Path(args.dir), console if console.is_dir() else None)
+    uvicorn.run(server, host=args.host, port=args.port, proxy_headers=False, log_level="info")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="steward")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -160,8 +257,26 @@ def main(argv: list[str] | None = None) -> int:
     scenario = commands.add_parser("scenario", help="play or replay a scenario")
     scenario.add_argument("name", choices=["manchester"])
     scenario.add_argument("--mode", choices=["live", "replay"], required=True)
-    scenario.add_argument("--approvals", choices=["scripted", "manual"], default="scripted")
+    scenario.add_argument(
+        "--approvals", choices=["scripted", "manual", "owner-first"], default="scripted"
+    )
     scenario.add_argument("--speed", type=float, default=60.0)
+    scenario.add_argument(
+        "--real-time",
+        action="store_true",
+        help="play the evening at the clock's own pace (12 h 35 min), no fast-forward",
+    )
+    scenario.add_argument(
+        "--demo-night",
+        action="store_true",
+        help="pace the story to the wall clock: night beats 23:45 to 02:30, the brief at 03:30",
+    )
+    scenario.add_argument(
+        "--owner-wait-min",
+        type=float,
+        default=15.0,
+        help="minutes to wait for the owner's decisions (manual and owner-first)",
+    )
     scenario.add_argument(
         "--attacks", choices=["fallback", "agent", "scripted"], default="fallback"
     )
@@ -178,7 +293,30 @@ def main(argv: list[str] | None = None) -> int:
     again.add_argument("--from-server", action="store_true")
     again.add_argument("--base-url", default=DEFAULT_URL)
 
+    demo = commands.add_parser("demo", help="the public demo: record, bundle and serve")
+    steps = demo.add_subparsers(dest="step", required=True)
+    scripted = steps.add_parser("record-scripted", help="play the evening with scripted actors")
+    scripted.add_argument("--out", default="var/scripted-export.jsonl")
+    packed = steps.add_parser("bundle", help="add a recorded session to deploy/demo")
+    packed.add_argument("--export", required=True, help="JSONL export holding the session")
+    packed.add_argument("--session", help="session id (default: the last scenario run)")
+    packed.add_argument("--name", required=True)
+    packed.add_argument("--label", required=True)
+    packed.add_argument("--kind", choices=["live", "scripted"], required=True)
+    packed.add_argument("--dir", default="deploy/demo")
+    served = steps.add_parser("serve", help="serve the bundled recordings read-only")
+    served.add_argument("--dir", default="deploy/demo")
+    served.add_argument("--console", default="apps/web/dist")
+    served.add_argument("--host", default="127.0.0.1")
+    served.add_argument("--port", type=int, default=8100)
+
     args = parser.parse_args(argv)
+    if args.command == "demo":
+        if args.step == "serve":
+            return serve(args)
+        if args.step == "bundle":
+            return asyncio.run(bundle(args))
+        return asyncio.run(record_scripted(args))
     if args.command == "replay" or args.mode == "replay":
         return asyncio.run(replay(args))
     return asyncio.run(live(args))

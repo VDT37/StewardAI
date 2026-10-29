@@ -6,7 +6,7 @@
     defaults: {
       // <provider>/<model id>. Steward forces the personal pass's model anyway
       // (config/steward.yaml); keep this in step.
-      model: { primary: "steward/nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B" },
+      model: { primary: "steward/nvidia/Nemotron-3_5-Lightning" },
     },
   },
   models: {
@@ -19,12 +19,12 @@
         timeoutSeconds: 300,
         models: [
           {
-            id: "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B",
-            name: "Nemotron small via Steward",
+            id: "nvidia/Nemotron-3_5-Lightning",
+            name: "Nemotron 3.5 Lightning via Steward",
             reasoning: true,
             input: ["text"],
-            // Served context length from GET /v1/models?verbose=true (Part F, 21 Oct 2026).
-            contextWindow: 262144,
+            // Served context length from GET /v1/models?verbose=true (re-checked 28 Oct 2026).
+            contextWindow: 1048576,
             maxTokens: 8192,
           },
         ],

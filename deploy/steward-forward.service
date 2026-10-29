@@ -1,0 +1,22 @@
+# The OpenShell port forward to Hermes's API in the work sandbox (127.0.0.1:8642), as a systemd
+# user service (Phase 3 Part G, P3-D11 A). Until now it died whenever the VM stopped and had to
+# be restarted by hand; here it runs in the foreground and systemd restarts it, also while the
+# gateway or the sandbox is still coming up after a boot.
+#   cp ~/StewardAI/deploy/steward-forward.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload && systemctl --user enable --now steward-forward
+[Unit]
+Description=OpenShell forward 127.0.0.1:8642 to the work agent's Hermes API
+After=network-online.target
+
+[Service]
+Type=simple
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+StandardInput=null
+# A forward left over from a manual start would hold the port.
+ExecStartPre=-/usr/bin/openshell forward stop 8642 work-agent
+ExecStart=/usr/bin/openshell forward start 8642 work-agent
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

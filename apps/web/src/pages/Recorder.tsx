@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { api, ApiError, type ClockInfo, type ReplayResult, type ScenarioState, type VerifyResult } from '../api'
 import { when } from '../format'
 import { useLoad, type OnError } from '../hooks'
+import { useMode } from '../mode'
 import { Button, PageTitle, Panel, RawJson } from '../ui'
 
 const loadScenario = () => api.scenario()
@@ -131,6 +132,72 @@ function Scenario({ onError }: { onError: OnError }) {
   )
 }
 
+function ReplayResultLine({ result }: { result: ReplayResult }) {
+  return (
+    <div className="mt-3">
+      {result.error ? (
+        <p className="text-refused">{result.error}</p>
+      ) : (
+        <p className={`text-lg font-bold ${result.ok ? 'text-personal' : 'text-refused'}`}>
+          {result.ok
+            ? `Identical: ${result.compared} decisions matched in ${result.seconds} s.`
+            : `Different at decision ${result.first_difference?.index} of ${result.recorded_decisions}.`}
+        </p>
+      )}
+      {result.first_difference && <RawJson value={result.first_difference} label="Show the first difference" />}
+    </div>
+  )
+}
+
+// The public demo: the replay that built this page at start, and a fresh one on request.
+function DemoReplay({ onError }: { onError: OnError }) {
+  const { recording } = useMode()
+  const [result, setResult] = useState<(ReplayResult & { cached?: boolean; ran_at?: string }) | null>(
+    recording?.rerun ?? null,
+  )
+  const [running, setRunning] = useState(false)
+  if (!recording) return null
+  const run = () => {
+    setRunning(true)
+    api
+      .demoReplay(recording.name)
+      .then(setResult, onError)
+      .finally(() => setRunning(false))
+  }
+  return (
+    <Panel
+      title="Replay"
+      aside={
+        <Button kind="primary" onClick={run} disabled={running}>
+          {running ? 'Replaying...' : 'Re-run the replay on the server'}
+        </Button>
+      }
+    >
+      <p className="max-w-3xl text-muted">
+        This whole page is a replay: at start, the server played the recorded actions back through
+        a fresh Steward, with no agents, no model calls and no keys, and compared every decision with
+        the recording. Re-run it to see it happen again (one at a time; a result is kept for 10
+        minutes).
+      </p>
+      {recording.replay && (
+        <>
+          <p className="mt-3 text-sm text-muted">At start:</p>
+          <ReplayResultLine result={recording.replay} />
+        </>
+      )}
+      {result && (
+        <>
+          <p className="mt-3 text-sm text-muted">
+            {result.cached ? 'Re-run (kept from the last few minutes)' : 'Re-run just now'}
+            {result.ran_at ? `, ${result.ran_at}` : ''}:
+          </p>
+          <ReplayResultLine result={result} />
+        </>
+      )}
+    </Panel>
+  )
+}
+
 function Replay({ onError }: { onError: OnError }) {
   const [last, reload] = useLoad<ReplayResult>(loadReplay, onError, 10000)
   const [running, setRunning] = useState(false)
@@ -155,31 +222,19 @@ function Replay({ onError }: { onError: OnError }) {
         Replay plays the recorded actions back through a fresh Steward, with no agents, no model
         calls and no keys, and compares every decision with the recording.
       </p>
-      {result && (
-        <div className="mt-3">
-          {result.error ? (
-            <p className="text-refused">{result.error}</p>
-          ) : (
-            <p className={`text-lg font-bold ${result.ok ? 'text-personal' : 'text-refused'}`}>
-              {result.ok
-                ? `Identical: ${result.compared} decisions matched in ${result.seconds} s.`
-                : `Different at decision ${result.first_difference?.index} of ${result.recorded_decisions}.`}
-            </p>
-          )}
-          {result.first_difference && <RawJson value={result.first_difference} label="Show the first difference" />}
-        </div>
-      )}
+      {result && <ReplayResultLine result={result} />}
     </Panel>
   )
 }
 
 export function RecorderPage({ onError }: { onError: OnError }) {
+  const { demo } = useMode()
   return (
     <div className="space-y-4">
       <PageTitle title="Recorder" lead="The flight log is append-only and hash-chained. Replay shows Steward makes the same decisions every time." />
       <Chain onError={onError} />
-      <Scenario onError={onError} />
-      <Replay onError={onError} />
+      {demo ? <DemoReplay onError={onError} /> : <Scenario onError={onError} />}
+      {!demo && <Replay onError={onError} />}
     </div>
   )
 }

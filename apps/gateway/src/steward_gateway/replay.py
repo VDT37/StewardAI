@@ -11,6 +11,11 @@ in for Tavily, and Steward's checks run fresh. No sandbox, no model call, no key
 The decision events (verdicts, trimmed replies, holds, executions) of the replay are then
 compared with the recording, as canonical JSON, after dropping timings. A pass shows Steward's
 decisions are deterministic; it does not show that the agents would act the same way again.
+
+Phase 3: scheduled jobs are replayed from their scheduler.run events ("system_action"), the
+morning brief's facts are recomputed and compared, and its text comes from the recording (like
+web results), so replay never calls the helper model. The watcher is not replayed from the log:
+it runs again on the replayed events and must pause at the same event.
 """
 
 from __future__ import annotations
@@ -19,11 +24,14 @@ import asyncio
 import json
 import time
 from collections import Counter
-from collections.abc import Iterable, Mapping
+from collections.abc import AsyncIterator, Iterable, Mapping
+from contextlib import asynccontextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import httpx
+from fastapi import FastAPI
 
 from steward_core.canonical import jcs
 from steward_core.clock import StewardClock, parse_iso
@@ -66,12 +74,25 @@ DECISION_KINDS = frozenset(
         "world.reset",
         "admin.pass_suspended",
         "admin.pass_resumed",
+        # Phase 3
+        "admin.pass_revoked",
+        "admin.tool_off",
+        "admin.tool_on",
+        "watcher.paused",
+        "mail.screened",
+        "mail.verdict",
+        "scheduler.run",
+        "brief.facts",
     }
 )
 # Timings differ between runs; everything else in a decision event must match.
 VOLATILE = frozenset({"latency_ms", "duration_ms"})
 # Outcomes from outside Steward: the replayer releases the waiting code with the recording.
-GATED = {"tool.result": "call_id", "intent.executed": "intent_key"}
+GATED = {
+    "tool.result": "call_id",
+    "intent.executed": "intent_key",
+    "brief.written": "brief_id",
+}
 DELIVERIES = {"a2a.delivery": "request_id", "a2a.notice_delivery": "notice_id", "hold.told": "key"}
 WAIT_S = 5.0
 
@@ -156,9 +177,27 @@ def _replay_settings(policy: Policy) -> Settings:
     )
 
 
+@dataclass
+class ReplayRun:
+    app: FastAPI
+    runtime: Runtime
+    result: dict[str, Any]
+
+
 async def replay_events(
     events: list[dict[str, Any]], policy_path: str | None = None
 ) -> dict[str, Any]:
+    async with replayed(events, policy_path) as run:
+        return run.result
+
+
+@asynccontextmanager
+async def replayed(
+    events: list[dict[str, Any]], policy_path: str | None = None, *, mode: str = "owner"
+) -> AsyncIterator[ReplayRun]:
+    """Replay a session and keep the replayed Steward running until the block ends. The public
+    demo (mode "demo") serves it read-only, its clock frozen at the last recorded event, so the
+    site a visitor sees is the replay itself."""
     from steward_gateway.app import create_app
 
     started = time.perf_counter()
@@ -193,6 +232,7 @@ async def replay_events(
         gate=gate,
         session_id=session_id,
         anchor_value=anchor or "replay",
+        mode=mode,
     )
     runtime: Runtime = app.state.steward
     if scoped:
@@ -201,11 +241,7 @@ async def replay_events(
     recorded_counts: Counter[str] = Counter()
 
     def produced(kind: str) -> int:
-        return sum(
-            1
-            for e in store.events(kind=kind, limit=5000, newest_first=False)
-            if e.session_id == session_id
-        )
+        return len(store.events(kind=kind, limit=5000, newest_first=False, session_id=session_id))
 
     async def catch_up(kind: str) -> bool:
         """Wait until the replay has produced this event; False if it never does."""
@@ -224,8 +260,8 @@ async def replay_events(
         nonlocal checked
         got = [
             e.as_dict()
-            for e in store.events(after_seq=0, limit=5000, newest_first=False)
-            if e.session_id == session_id and e.kind in DECISION_KINDS
+            for e in store.events(limit=5000, newest_first=False, session_id=session_id)
+            if e.kind in DECISION_KINDS
         ]
         while checked < len(got):
             if checked >= len(want) or decision(want[checked]) != decision(got[checked]):
@@ -253,7 +289,23 @@ async def replay_events(
         elif name == "clear_flags" and agent:
             runtime.clear_flags(agent, str(action.get("by", "owner")))
         elif name in {"suspend", "resume"} and agent:
-            runtime.set_suspended(agent, name == "suspend")
+            try:
+                runtime.set_suspended(agent, name == "suspend")
+            except ValueError:
+                pass
+        elif name == "revoke" and agent:
+            runtime.revoke(agent, str(action.get("by", "owner")))
+        elif name in {"tool_off", "tool_on"} and agent:
+            try:
+                runtime.set_tool(
+                    agent, str(action["tool"]), name == "tool_on", str(action.get("by", "owner"))
+                )
+            except ValueError:
+                pass
+        elif name == "mail_verdict":
+            runtime.mail_verdict(
+                str(action["message_id"]), str(action["verdict"]), str(action.get("by", "owner"))
+            )
 
     async with app.router.lifespan_context(app):
         for event in events:
@@ -276,10 +328,17 @@ async def replay_events(
                     runtime.reset_world(follow_clock=bool(action.get("follow_clock")))
                 elif action.get("change"):
                     await runtime.apply_world_change(str(action["change"]))
+            elif "system_action" in payload and runtime.scheduler is not None:
+                action = payload["system_action"]
+                spawn(runtime.scheduler.run_job(str(action["job"]), parse_iso(str(action["due"]))))
             elif kind in GATED:
                 gate.release(kind, str(payload[GATED[kind]]), payload)
             elif kind in DELIVERIES:
                 gate.release("delivery", str(payload.get(DELIVERIES[kind])), payload)
+            elif kind == "scenario.beat":
+                # Narrative, not compared: the console shows the story's beats, and a held
+                # call's card says which beat started the agent's run.
+                runtime.recorder.record("system", kind, payload, at=parse_iso(str(event["ts"])))
             elif kind == "a2a.timeout":
                 runtime.a2a.force_timeout(str(payload["request_id"]))
             elif kind == "hold.expired":
@@ -305,32 +364,33 @@ async def replay_events(
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
 
-    got = [
-        e.as_dict()
-        for e in store.events(limit=5000, newest_first=False)
-        if e.session_id == session_id and e.kind in DECISION_KINDS
-    ]
-    first: dict[str, Any] | None = None
-    for index in range(max(len(want), len(got))):
-        a = want[index] if index < len(want) else None
-        b = got[index] if index < len(got) else None
-        if a is None or b is None or decision(a) != decision(b):
-            first = {
-                "index": index,
-                "recorded": _brief(a),
-                "replayed": _brief(b),
-            }
-            break
-    return {
-        "ok": first is None,
-        "session_id": session_id,
-        "compared": min(len(want), len(got)),
-        "recorded_decisions": len(want),
-        "replayed_decisions": len(got),
-        "events_in_recording": len(events),
-        "first_difference": first,
-        "seconds": round(time.perf_counter() - started, 2),
-    }
+        got = [
+            e.as_dict()
+            for e in store.events(limit=5000, newest_first=False, session_id=session_id)
+            if e.kind in DECISION_KINDS
+        ]
+        first: dict[str, Any] | None = None
+        for index in range(max(len(want), len(got))):
+            a = want[index] if index < len(want) else None
+            b = got[index] if index < len(got) else None
+            if a is None or b is None or decision(a) != decision(b):
+                first = {
+                    "index": index,
+                    "recorded": _brief(a),
+                    "replayed": _brief(b),
+                }
+                break
+        result = {
+            "ok": first is None,
+            "session_id": session_id,
+            "compared": min(len(want), len(got)),
+            "recorded_decisions": len(want),
+            "replayed_decisions": len(got),
+            "events_in_recording": len(events),
+            "first_difference": first,
+            "seconds": round(time.perf_counter() - started, 2),
+        }
+        yield ReplayRun(app, runtime, result)
 
 
 def _brief(event: Mapping[str, Any] | None) -> dict[str, Any] | None:

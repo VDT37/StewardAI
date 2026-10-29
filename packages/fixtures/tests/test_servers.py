@@ -33,7 +33,12 @@ def test_every_server_lists_its_tools() -> None:
     names = asyncio.run(run())
     assert set(names) == set(SERVER_NAMES)
     assert names["personal_calendar"] == ["list_events"]
-    assert names["work_mail"] == ["list_messages", "read_message", "send_message"]
+    assert names["work_mail"] == [
+        "list_messages",
+        "read_message",
+        "report_message",
+        "send_message",
+    ]
     assert names["personal_gmail"] == ["list_messages", "read_message"]
     assert names["shared_todo"] == ["delete_item", "get_item", "list_items", "update_item"]
     assert names["travel"] == [

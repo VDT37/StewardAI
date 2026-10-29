@@ -1,0 +1,25 @@
+id: pause-survives-restart
+category: Watcher and contain
+title: A pause survives a Steward restart, and only a resume lifts it
+steps:
+- owner:
+    action: pause
+    agent: work
+  expect: done
+- restart: true
+- call:
+    as: work
+    tool: todo_list_items
+    args: {}
+  expect: suspended
+- check:
+    paused: work
+- owner:
+    action: resume
+    agent: work
+  expect: done
+- call:
+    as: work
+    tool: todo_list_items
+    args: {}
+  expect: allowed

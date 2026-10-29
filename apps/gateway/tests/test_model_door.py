@@ -59,7 +59,7 @@ def test_models_lists_only_the_pass_model(tmp_path: Path) -> None:
     with http_app(tmp_path) as (client, _, ctx):
         assert client.get("/v1/models").status_code == 401
         response = client.get("/v1/models", headers=bearer(WORK))
-        assert [m["id"] for m in response.json()["data"]] == ["nvidia/nemotron-3-super-120b-a12b"]
+        assert [m["id"] for m in response.json()["data"]] == ["nvidia/Nemotron-3.5-Super-VL"]
         denied = ctx.store.events(kind="auth.denied")
         assert len(denied) == 1 and denied[0].payload["status"] == 401
 
@@ -77,7 +77,7 @@ def test_chat_forwards_meters_and_logs(tmp_path: Path) -> None:
         assert str(sent.url) == "https://api.tokenfactory.nebius.com/v1/chat/completions"
         assert sent.headers["authorization"] == f"Bearer {KEY}"
         assert sent.headers["accept-encoding"] == "identity"
-        assert json.loads(sent.content)["model"] == "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B"
+        assert json.loads(sent.content)["model"] == "nvidia/Nemotron-3_5-Lightning"
         (event,) = model_calls(ctx.store.events())
         assert event.agent == "personal" and event.door == "model"
         # Nano: 13000 * 0.06 + 500 * 0.24 per million = 0.000900 USD

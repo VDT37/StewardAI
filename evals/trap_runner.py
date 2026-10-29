@@ -17,6 +17,14 @@ Steps:
   model: {as}                             one model call; expect: 200 | 429
   http: {as, path}                        an MCP request with that agent's pass; expect: status
   check: {...}                            state checks (see check())
+
+Phase 3 adds:
+  owner: {action, agent, tool, message_id, verdict}   pause | resume | revoke | tool_off |
+                                          tool_on | verdict; expect: done | rejected
+  restart: true                           a new Steward on the same database file
+  brief: run                              the morning brief now; brief_answer: approve | deny
+  visitor: {method, path}                 a request with no token (spec mode: demo); expect: status
+  decide: {hold: pause, choice}           the newest pending pause card
 """
 
 from __future__ import annotations
@@ -87,6 +95,8 @@ def outcome(result: Any) -> str:
     if status in {"refused", "held", "answered", "no_answer"}:
         return str(status)
     text = " ".join(getattr(c, "text", "") for c in result.content)
+    if result.is_error and text == "pass suspended":
+        return "suspended"
     if result.is_error and "not available" in text:
         return "denied"
     if result.is_error and text.startswith("Refused"):
@@ -104,6 +114,7 @@ class Run:
         self.seen: list[str] = []
         self.holds: list[str] = []
         self.log: list[str] = []
+        self.last_text = ""
 
     def fail(self, step: dict[str, Any], message: str) -> None:
         raise AssertionError(f"{self.spec['id']}: {message} (step {json.dumps(step)[:200]})")
@@ -123,6 +134,7 @@ class Run:
 
     async def agent_call(self, agent: str, tool: str, args: dict[str, Any]) -> Any:
         result = await call(self.ctx, agent, tool, args)
+        self.last_text = result.model_dump_json()
         if agent == "work":
             self.seen.append(result.model_dump_json())
         data = result.structured_content or {}
@@ -197,8 +209,65 @@ class Run:
                 response = await client.post(path, headers=bearer(PASSES[agent]), json={})
             if expect is not None and response.status_code != int(expect):
                 self.fail(step, f"HTTP {response.status_code}, expected {expect}")
+        if "owner" in step:
+            self.owner_step(step)
+        if step.get("brief") == "run":
+            assert self.ctx.scheduler is not None
+            await self.ctx.scheduler.run_job("brief", self.ctx.clock.now())
+        if "brief_answer" in step:
+            await self.brief_answer(step)
+        if "visitor" in step:
+            spec = step["visitor"]
+            async with httpx.AsyncClient(
+                transport=httpx.ASGITransport(app=self.app), base_url="http://127.0.0.1:8000"
+            ) as client:
+                response = await client.request(str(spec["method"]), str(spec["path"]), json={})
+            if expect is not None and response.status_code != int(expect):
+                self.fail(step, f"HTTP {response.status_code}, expected {expect}")
         if "check" in step:
             self.check(step)
+
+    def owner_step(self, step: dict[str, Any]) -> None:
+        spec = step["owner"]
+        action, agent = str(spec["action"]), str(spec.get("agent", "work"))
+        got = "done"
+        try:
+            if action in {"pause", "resume"}:
+                self.ctx.set_suspended(agent, action == "pause", "trap")
+            elif action == "revoke":
+                self.ctx.revoke(agent, "trap")
+            elif action in {"tool_off", "tool_on"}:
+                self.ctx.set_tool(agent, str(spec["tool"]), action == "tool_on", "trap")
+            elif action == "verdict":
+                self.ctx.mail_verdict(str(spec["message_id"]), str(spec["verdict"]), "trap")
+            else:
+                self.fail(step, f"unknown owner action {action}")
+        except ValueError:
+            got = "rejected"
+        if step.get("expect") is not None and got != step["expect"]:
+            self.fail(step, f"owner {action} gave {got}")
+
+    async def brief_answer(self, step: dict[str, Any]) -> None:
+        from steward_gateway.supervisor import latest_brief
+
+        found = latest_brief(self.ctx)
+        if found is None or not found.get("question"):
+            self.fail(step, "no brief with a question")
+            return
+        question = found["question"]
+        choice = question["approve"] if step["brief_answer"] == "approve" else question["deny"]
+        states = []
+        for item in question["holds"]:
+            try:
+                hold = await self.ctx.decide(
+                    str(item["hold_id"]), choice, str(item["fingerprint"]), "trap (brief)"
+                )
+                states.append(hold.state)
+            except HoldError:
+                states.append("rejected")
+        got = states[0] if len(set(states)) == 1 else "mixed"
+        if step.get("expect") is not None and got != step["expect"]:
+            self.fail(step, f"answering the brief gave {states}")
 
     async def call_step(self, step: dict[str, Any]) -> None:
         spec = step["call"]
@@ -232,7 +301,15 @@ class Run:
 
     async def decide_step(self, step: dict[str, Any]) -> None:
         spec = step["decide"]
-        hold_id = self.holds[-1] if spec.get("hold", "last") == "last" else str(spec["hold"])
+        if spec.get("hold") == "pause":
+            cards = [h for h in self.ctx.holds.pending() if h.kind == "pause"]
+            if not cards:
+                self.fail(step, "no pause card is waiting")
+            hold_id = cards[-1].hold_id
+        elif spec.get("hold", "last") == "last":
+            hold_id = self.holds[-1]
+        else:
+            hold_id = str(spec["hold"])
         hold = self.ctx.holds.get(hold_id)
         assert hold is not None
         fingerprint = "f" * 64 if spec.get("fingerprint") == "wrong" else hold.fingerprint
@@ -275,6 +352,35 @@ class Run:
             field, value = spec["booking"]
             if not any(b.get(field) == value for b in world.bookings.values()):
                 self.fail(step, f"no booking with {field}={value}")
+        if "paused" in spec and spec["paused"] not in self.ctx.passes.suspended:
+            self.fail(step, f"the {spec['paused']} agent is not paused")
+        if "not_paused" in spec and spec["not_paused"] in self.ctx.passes.suspended:
+            self.fail(step, f"the {spec['not_paused']} agent is paused")
+        if "watcher_paused" in spec:
+            rule = spec.get("watcher_rule")
+            pauses = [
+                e
+                for e in self.ctx.store.events(kind="watcher.paused", limit=20)
+                if e.agent == spec["watcher_paused"] and rule in (None, e.payload.get("rule"))
+            ]
+            if not pauses:
+                self.fail(step, f"the watcher did not pause {spec['watcher_paused']} ({rule})")
+        if "tool_hidden" in spec:
+            agent, tool = spec["tool_hidden"]
+            names = [t.name for t in self.ctx.tool_door.visible_tools(agent)]
+            if tool in names:
+                self.fail(step, f"{tool} is still in the {agent} agent's tool list")
+        if "last_has" in spec and str(spec["last_has"]) not in self.last_text:
+            self.fail(step, f"the last result lacks {spec['last_has']!r}")
+        if "last_lacks" in spec and str(spec["last_lacks"]) in self.last_text:
+            self.fail(step, f"the last result still has {spec['last_lacks']!r}")
+        if "brief_question" in spec:
+            facts = self.ctx.store.events(kind="brief.facts", limit=1)
+            question = facts[0].payload["facts"].get("question") if facts else None
+            if not question or question["kind"] != spec["brief_question"]:
+                self.fail(step, f"the brief's question is {question and question['kind']}")
+            elif "brief_holds" in spec and len(question["holds"]) != int(spec["brief_holds"]):
+                self.fail(step, f"the question covers {len(question['holds'])} holds")
         if spec.get("work_saw_nothing_private"):
             for text in self.seen:
                 leaked = find_planted(text, side="personal")
@@ -314,15 +420,26 @@ async def run_spec(spec: dict[str, Any], tmp_path: Path) -> list[str]:
                 await run.step(step)
             return run.log
     policy = fast_policy(reply_grace_s=0)
-    async with running(tmp_path, personal, clock=story_clock(), work=hermes, policy=policy) as (
-        app,
-        ctx,
-        _,
-    ):
-        run = Run(ctx, app, spec)
-        if spec.get("scenario"):
-            await run_manchester(ctx, "scripted", 0, "agent")
-            run.seen.extend(hermes.seen)
-        for step in spec["steps"]:
-            await run.step(step)
-        return run.log
+    mode = str(spec.get("mode", "owner"))
+    # A restart step ends one Steward and starts another on the same database file.
+    segments: list[list[dict[str, Any]]] = [[]]
+    for step in spec["steps"]:
+        if step.get("restart"):
+            segments.append([])
+        else:
+            segments[-1].append(step)
+    run: Run | None = None
+    for index, steps in enumerate(segments):
+        async with running(
+            tmp_path, personal, clock=story_clock(), work=hermes, policy=policy, mode=mode
+        ) as (app, ctx, _):
+            if run is None:
+                run = Run(ctx, app, spec)
+            run.ctx, run.app = ctx, app
+            if index == 0 and spec.get("scenario"):
+                await run_manchester(ctx, "scripted", 0, "agent")
+                run.seen.extend(hermes.seen)
+            for step in steps:
+                await run.step(step)
+    assert run is not None
+    return run.log

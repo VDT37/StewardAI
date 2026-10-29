@@ -3,7 +3,8 @@ import { useState } from 'react'
 import { api, ApiError, type Hold } from '../api'
 import { askPhrase, callPhrase, day, ruleLabel, when, who } from '../format'
 import { useLoad, type OnError } from '../hooks'
-import { Actor, Button, Empty, Fingerprint, OutcomeTag, PageTitle, Panel, RawJson } from '../ui'
+import { useMode } from '../mode'
+import { Actor, Button, Empty, Fingerprint, OutcomeTag, OwnerOnly, PageTitle, Panel, RawJson } from '../ui'
 
 type Payload = Record<string, unknown>
 
@@ -17,6 +18,10 @@ const loadAll = () => api.holds('all')
 
 // The sentence at the top of a pass: what the agent wants to do.
 function wants(hold: Hold): string {
+  if (hold.kind === 'pause') {
+    const breach = ((hold.details.breach ?? {}) as Payload).detail
+    return `was paused by the watcher: ${str(breach) || ruleLabel(hold.rule)}`
+  }
   if (hold.kind === 'address') {
     const request = (hold.details.request ?? {}) as Payload
     return `wants your home address to book a taxi on ${day(str(request.trip_date))}, pickup ${str(request.pickup_time).slice(0, 5)}`
@@ -144,6 +149,12 @@ function Pass({ hold, onDecided, onError }: { hold: Hold; onDecided: () => void;
           {hold.reason.charAt(0).toUpperCase()}
           {hold.reason.slice(1)}.
         </p>
+        {hold.prompted_by && (
+          <p className="mt-2">
+            <span className="font-bold">Prompted by: </span>
+            {hold.prompted_by}
+          </p>
+        )}
         {hold.rules.length > 1 && (
           <p className="mt-1 text-sm text-muted">Rules: {hold.rules.map(ruleLabel).join(', ')}.</p>
         )}
@@ -163,12 +174,14 @@ function Pass({ hold, onDecided, onError }: { hold: Hold; onDecided: () => void;
             <Button
               key={choice.id}
               kind={index === 0 ? 'primary' : choice.id === 'deny' ? 'danger' : 'plain'}
+              owner
               disabled={busy}
               onClick={() => decide(choice.id)}
             >
               {choice.label}
             </Button>
           ))}
+          <OwnerOnly />
           {problem && <p className="text-sm text-refused">{problem}</p>}
         </div>
       </div>
@@ -186,6 +199,7 @@ const STATE_WORD: Record<string, string> = {
 }
 
 export function ApprovalsPage({ onError }: { onError: OnError }) {
+  const { demo } = useMode()
   const [pending, reloadPending] = useLoad(loadPending, onError, 2500)
   const [all, reloadAll] = useLoad(loadAll, onError, 6000)
   const decided = (all ?? []).filter((h) => h.state !== 'pending').slice(0, 12)
@@ -196,8 +210,8 @@ export function ApprovalsPage({ onError }: { onError: OnError }) {
   return (
     <div>
       <PageTitle
-        title="Waiting for you"
-        lead="Steward holds a call when it needs your yes: sending, paid changes, your address, anything after an agent has seen untrusted content, and writes made from an old version."
+        title={demo ? 'Held for the owner' : 'Waiting for you'}
+        lead="Steward holds a call when it needs the owner's yes: sending, paid changes, the home address, anything after an agent has seen untrusted content, and writes made from an old version. The watcher's pauses wait here too."
       />
       {pending === null ? null : pending.length === 0 ? (
         <Empty title="Nothing is waiting for you">

@@ -8,6 +8,18 @@ writes), the agent runs with fixed prompts, and the owner's approvals at 19:06 a
 (scripted, or left to the owner in the console with approvals="manual"). While agents work the
 clock runs at real speed; the quiet gaps between beats are fast-forwarded at `speed`.
 
+A real-time run (real_time=True) never fast-forwards: the evening takes its full 12 hours 35
+minutes, so the 07:30 brief arrives on the owner's phone in real time, with nobody pressing
+anything overnight. With approvals="owner-first" the owner decides in the console or Telegram,
+and whatever is still held after owner_wait_s gets the scripted decision, so the story goes on
+while the owner is away.
+
+The demo night (plan="demo-night") keeps the story's own times but paces them to the owner's
+wall clock: each beat lands at a fixed London time (DEMO_NIGHT), so the evening plays while the
+owner is up, the night's beats fall between 23:45 and 02:30 while the story's owner sleeps (the
+quiet hours: no cards), and the 07:30 brief arrives at 03:30, followed by the night's held calls
+as cards. Between two beats the story clock runs at whatever rate lands it on time.
+
 Two kinds of actors appear in the log. Real agents (Hermes, and OpenClaw answering asks) act
 through their passes. Scripted actors replay what overnight_script.json says an agent does (the
 to-do writes) and, at 22:40 with attacks="fallback", play the tricked work agent if Hermes did
@@ -21,6 +33,7 @@ import time
 from datetime import datetime, timedelta
 from typing import Any
 
+from steward_core.clock import LONDON
 from steward_core.store import Hold
 from steward_fixtures import at, load_raw, overnight_changes
 from steward_gateway.adapters import HermesRunsAdapter
@@ -53,30 +66,96 @@ DECISIONS = {
 }
 
 
+# The demo night: story beat -> London wall time, and minutes to wait for the owner per decision.
+DEMO_NIGHT = {
+    "19:06": "19:40",
+    "21:15": "21:45",
+    "22:40": "23:45",
+    "23:30": "00:30",
+    "00:50": "01:30",
+    "01:30": "02:30",
+    "07:30": "03:30",
+    "07:35": "03:35",
+}
+DEMO_NIGHT_WAITS = {"19:06": 90.0, "07:35": 210.0}
+PLANS = {"demo-night": (DEMO_NIGHT, DEMO_NIGHT_WAITS)}
+
+
+def wall_time(hhmm: str, now: datetime) -> datetime:
+    """The next London wall time hh:mm at or after now; a target missed by under six hours is
+    taken as now (the run is late, so the beat goes at once)."""
+    hours, minutes = (int(x) for x in hhmm.split(":"))
+    local = now.astimezone(LONDON)
+    candidate = local.replace(hour=hours, minute=minutes, second=0, microsecond=0)
+    if candidate < local:
+        if local - candidate < timedelta(hours=6):
+            return local
+        candidate += timedelta(days=1)
+    return candidate
+
+
 def start_scenario(
-    rt: Runtime, name: str, approvals: str, speed: float, attacks: str
+    rt: Runtime,
+    name: str,
+    approvals: str,
+    speed: float,
+    attacks: str,
+    real_time: bool = False,
+    owner_wait_min: float = BEAT_WAIT_S / 60,
+    plan: str | None = None,
 ) -> dict[str, Any]:
     if name != NAME:
         raise ValueError(f"unknown scenario {name!r} (known: {NAME})")
-    if approvals not in {"scripted", "manual"}:
-        raise ValueError("approvals must be scripted or manual")
+    if approvals not in {"scripted", "manual", "owner-first"}:
+        raise ValueError("approvals must be scripted, manual or owner-first")
     if attacks not in {"fallback", "agent", "scripted"}:
         raise ValueError("attacks must be fallback, agent or scripted")
+    if not 0 < owner_wait_min <= 12 * 60:
+        raise ValueError("owner_wait_min must be above 0 and at most 720")
+    if plan is not None and plan not in PLANS:
+        raise ValueError(f"unknown plan {plan!r} (known: {', '.join(PLANS)})")
     task = rt.extras.get("scenario_task")
     if isinstance(task, asyncio.Task) and not task.done():
         raise ValueError("a scenario is already running")
     rt.scenario = {"state": "starting", "name": name, "beats": []}
     rt.extras["scenario_task"] = asyncio.get_running_loop().create_task(
-        run_manchester(rt, approvals, speed, attacks)
+        run_manchester(
+            rt,
+            approvals,
+            speed,
+            attacks,
+            real_time=real_time,
+            owner_wait_s=owner_wait_min * 60,
+            plan=plan,
+        )
     )
-    return {"state": "starting", "name": name, "approvals": approvals}
+    return {
+        "state": "starting",
+        "name": name,
+        "approvals": approvals,
+        "real_time": real_time,
+        "plan": plan,
+    }
 
 
 class Runner:
-    def __init__(self, rt: Runtime, approvals: str, speed: float, attacks: str) -> None:
+    def __init__(
+        self,
+        rt: Runtime,
+        approvals: str,
+        speed: float,
+        attacks: str,
+        real_time: bool = False,
+        owner_wait_s: float = BEAT_WAIT_S,
+        plan: str | None = None,
+    ) -> None:
         self.rt = rt
         self.approvals = approvals
-        self.speed = speed
+        # Real time: the clock runs at its own pace and no gap is cut short.
+        self.speed = 1.0 if real_time else speed
+        self.real_time = real_time
+        self.owner_wait_s = owner_wait_s
+        self.wall, self.waits = PLANS[plan] if plan else ({}, {})
         self.attacks = attacks
         self.anchor = rt.world.anchor
         self.beats: list[dict[str, Any]] = []
@@ -93,9 +172,18 @@ class Runner:
     async def advance_to(self, target: datetime) -> None:
         clock = self.rt.clock
         gap = (target - clock.now()).total_seconds()
-        if gap > 0 and self.speed > 0:
+        beat = target.astimezone(LONDON).strftime("%H:%M")
+        if gap > 0 and beat in self.wall:
+            # Paced to the wall clock: run the story clock at the rate that lands on time.
+            real = datetime.now(LONDON)
+            wait = (wall_time(self.wall[beat], real) - real).total_seconds()
+            if wait > 0:
+                clock.set(clock.now(), rate=gap / wait)
+                await asyncio.sleep(wait)
+        elif gap > 0 and self.speed > 0:
             clock.set(clock.now(), rate=self.speed)
-            await asyncio.sleep(min(gap / self.speed, MAX_GAP_S))
+            wait = gap / self.speed
+            await asyncio.sleep(wait if self.real_time else min(wait, MAX_GAP_S))
         if gap > 0:
             # Land on the beat's time; never move the clock back past an overshoot.
             clock.set(max(target, clock.now()), rate=1.0)
@@ -133,14 +221,17 @@ class Runner:
 
     async def decide(self, when: str) -> None:
         wanted = DECISIONS[when]
-        if self.approvals == "manual":
-            self.beat(f"{when} approvals", actor="owner", mode="manual")
-            deadline = time.monotonic() + BEAT_WAIT_S
+        if self.approvals in {"manual", "owner-first"}:
+            self.beat(f"{when} approvals", actor="owner", mode=self.approvals)
+            deadline = time.monotonic() + self.waits.get(when, self.owner_wait_s / 60) * 60
             while time.monotonic() < deadline and any(
                 self.matching(agent, what) for agent, what, _ in wanted
             ):
-                await asyncio.sleep(2.0)
-            return
+                await asyncio.sleep(min(2.0, self.owner_wait_s))
+            if self.approvals == "manual":
+                return
+            # owner-first: the owner had their chance; what is still held gets the scripted
+            # decision below (nothing, if the owner decided everything).
         for agent, what, choice in wanted:
             for hold in self.matching(agent, what):
                 try:
@@ -206,8 +297,16 @@ def _fixture_page() -> str:
     return str(load_raw("web_pages")["pages"][0]["url"])
 
 
-async def run_manchester(rt: Runtime, approvals: str, speed: float, attacks: str) -> None:
-    runner = Runner(rt, approvals, speed, attacks)
+async def run_manchester(
+    rt: Runtime,
+    approvals: str,
+    speed: float,
+    attacks: str,
+    real_time: bool = False,
+    owner_wait_s: float = BEAT_WAIT_S,
+    plan: str | None = None,
+) -> None:
+    runner = Runner(rt, approvals, speed, attacks, real_time, owner_wait_s, plan)
     try:
         session = rt.recorder.new_session(f"scenario:{NAME}:live", scoped=True)
         rt.scenario.update({"state": "running", "session_id": session})
@@ -222,7 +321,10 @@ async def run_manchester(rt: Runtime, approvals: str, speed: float, attacks: str
                 "name": NAME,
                 "mode": "live",
                 "approvals": approvals,
-                "speed": speed,
+                "speed": runner.speed,
+                "real_time": real_time,
+                "owner_wait_min": round(owner_wait_s / 60, 2),
+                "plan": plan,
                 "attacks": attacks,
                 "anchor": runner.anchor.isoformat(),
                 "web_backend": rt.web_backend,
@@ -231,6 +333,9 @@ async def run_manchester(rt: Runtime, approvals: str, speed: float, attacks: str
         )
         rt.clock.set(runner.story(-1, "19:00"), rate=1.0)
         rt.recorder.record("system", "system.clock", rt.clock.describe())
+        if rt.scheduler is not None:
+            # Jobs in this run fire only for due times after Sunday 19:00 (the 07:30 brief).
+            rt.scheduler.observe()
         rt.reset_world(follow_clock=True)
         script = {c.id: c for c in overnight_changes(runner.anchor)}
 
@@ -243,6 +348,12 @@ async def run_manchester(rt: Runtime, approvals: str, speed: float, attacks: str
         await runner.advance_to(runner.story(-1, "19:06"))
         await runner.decide("19:06")
         await runner.run_agent("work", "19:06 after the approvals", FOLLOW_UP)
+
+        # Sun 21:15: a phishing email lands in the work inbox (Phase 3). Steward screens it
+        # when the work agent reads it: its link is withheld and the agent can report it.
+        await runner.advance_to(runner.story(-1, "21:15"))
+        await rt.apply_world_change("chg-phishing-arrives")
+        await runner.run_agent("work", "21:15 new mail", NEW_MAIL)
 
         # Sun 22:40: the poisoned agenda arrives.
         await runner.advance_to(runner.story(-1, "22:40"))
@@ -275,6 +386,15 @@ async def run_manchester(rt: Runtime, approvals: str, speed: float, attacks: str
         await runner.scripted_write(
             "chg-todo-stale-write-by-personal", "01:30 the personal agent renames the same item"
         )
+
+        # Mon 07:30: the morning brief, written because the clock reached 07:30 (nobody asks
+        # for it). The runner ticks the scheduler itself so the beat does not wait for its loop.
+        await runner.advance_to(runner.story(0, "07:30"))
+        if rt.scheduler is not None and "brief" in rt.scheduler.jobs:
+            seq, _ = rt.store.head()
+            await rt.scheduler.tick()
+            if await runner.wait_for("brief.written", seq, timeout_s=120):
+                runner.beat("07:30 morning brief", actor="steward")
 
         # Mon 07:35: the owner approves the paid changes; Steward tells the work agent.
         await runner.advance_to(runner.story(0, "07:35"))

@@ -72,6 +72,8 @@ class World:
         self.bookings: dict[str, dict[str, Any]] = {}
         self.outbox: list[dict[str, Any]] = []
         self.applied: list[str] = []
+        # Messages an agent reported as suspicious (Phase 3), by message id.
+        self.reported: dict[str, dict[str, Any]] = {}
         # Steward pins the world's time to the moment it decided a call while that call runs,
         # so a replay (which decides at the recorded moment) sees exactly the same time.
         self.pinned: datetime | None = None
@@ -91,6 +93,7 @@ class World:
         self.bookings = {}
         self.outbox = []
         self.applied = []
+        self.reported = {}
 
     def subscribe(self, listener: Listener) -> None:
         self._listeners.append(listener)
@@ -119,6 +122,21 @@ class World:
             now = self.now()
             messages = [m for m in messages if m.received <= now]
         return messages
+
+    def report(self, side: Side, message_id: str, reason: str) -> dict[str, Any]:
+        """Mark a message as reported (phishing or spam), like a mail client's Report button.
+        Reporting twice keeps the first report."""
+        if not any(m.id == message_id for m in self.messages(side)):
+            raise WorldError(f"no message with id {message_id!r}")
+        if message_id not in self.reported:
+            self.reported[message_id] = {
+                "id": message_id,
+                "side": side,
+                "reason": reason[:300],
+                "at": self.now().isoformat(),
+            }
+            self._changed("mail_reported", {"side": side, "id": message_id})
+        return dict(self.reported[message_id])
 
     def send(self, to: str, subject: str, body: str) -> dict[str, Any]:
         message = {

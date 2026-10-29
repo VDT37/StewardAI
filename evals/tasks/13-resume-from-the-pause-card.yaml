@@ -1,0 +1,23 @@
+id: resume-from-the-pause-card
+category: Normal tasks
+title: Resume on the watcher's card lets the agent carry on
+steps:
+- call:
+    as: work
+    tool: todo_list_items
+    args: {}
+  repeat: 10
+  expect: allowed
+- check:
+    paused: work
+- decide:
+    hold: pause
+    choice: resume
+  expect: done
+- call:
+    as: work
+    tool: todo_list_items
+    args: {}
+  expect: allowed
+- check:
+    not_paused: work

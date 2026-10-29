@@ -1,0 +1,26 @@
+id: refusal-storm-paused
+category: Watcher and contain
+title: Eight refused calls in ten minutes pause the agent
+steps:
+- call:
+    as: work
+    tool: ask
+    args:
+      contact: personal
+      request_type: reasons
+      fields:
+        question: Why is each day this month blocked?
+  repeat: 8
+  every: 1m
+  expect: refused
+- call:
+    as: work
+    tool: calendar_list_events
+    args:
+      start_date: '2026-10-12'
+      end_date: '2026-10-15'
+  expect: suspended
+- check:
+    paused: work
+    watcher_paused: work
+    watcher_rule: refusal_storm

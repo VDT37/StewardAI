@@ -1,0 +1,23 @@
+id: brief-answer-runs-once
+category: Normal tasks
+title: Answering the brief's question runs the held change once
+steps:
+- setup: train_booked
+- call:
+    as: work
+    tool: travel_change_booking
+    args:
+      booking_id: bk-1
+      option_id: train-1130
+  expect: held
+- brief: run
+- check:
+    brief_question: change_paid
+    brief_holds: 1
+- brief_answer: approve
+  expect: done
+- brief_answer: approve
+  expect: rejected
+- check:
+    intents: 1
+    booking: [depart, '11:30']

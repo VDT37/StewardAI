@@ -1,0 +1,23 @@
+# The public demo over HTTPS (Phase 3 Part G, P3-D4 A). Caddy gets and renews a Let's Encrypt
+# certificate for the name itself (HTTP-01 on port 80), redirects HTTP to HTTPS and forwards to
+# the demo container on 127.0.0.1:8100. Steward's own port 8000 stays closed. Caddy sets
+# X-Forwarded-For to the client's address (and ignores one sent by the client), which the demo's
+# rate limit reads.
+#
+#   sudo cp deploy/Caddyfile /etc/caddy/Caddyfile && sudo systemctl reload caddy
+13-49-146-96.sslip.io {
+	encode zstd gzip
+	request_body {
+		max_size 64KB
+	}
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		X-Frame-Options "DENY"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+		-Server
+	}
+	reverse_proxy 127.0.0.1:8100
+}

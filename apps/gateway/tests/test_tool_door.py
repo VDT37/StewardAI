@@ -27,6 +27,7 @@ def test_each_agent_lists_only_its_pass(tmp_path: Path) -> None:
         "hold_status",
         "mail_list_messages",
         "mail_read_message",
+        "mail_report_message",
         "mail_send_message",
         "todo_delete_item",
         "todo_list_items",

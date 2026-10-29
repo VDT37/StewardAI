@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import secrets
 from collections.abc import Mapping
@@ -98,12 +99,18 @@ class PassBook:
     """Which agent a pass belongs to, and whether that pass is suspended.
 
     Suspending a pass is the owner's kill switch for one agent (ADR 0008: revoking a pass is a
-    Steward change, the Nebius key is not touched). It lasts until resumed or Steward restarts.
+    Steward change, the Nebius key is not touched). Phase 3 keeps a pause in the database, so it
+    survives a restart, and adds revoked passes: suspended until a new pass is issued.
     """
 
     passes: Mapping[str, str]
     owner_token: str
     suspended: set[str] = field(default_factory=set)
+    revoked: set[str] = field(default_factory=set)
+
+    def pass_hash(self, agent: str) -> str:
+        """A digest of the agent's current pass (stored for a revocation, never the pass)."""
+        return hashlib.sha256(self.passes.get(agent, "").encode()).hexdigest()
 
     def identify(self, authorization: str | None) -> str | None:
         token = bearer_token(authorization)

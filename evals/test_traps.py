@@ -20,13 +20,16 @@ CATEGORIES = {
     "Writes": 5,
     "Budget": 3,
     "Bypass": 3,
+    "Watcher and contain": 6,
+    "Phishing": 2,
+    "Public demo": 1,
 }
 
 
-def test_the_suite_has_forty_traps_and_ten_tasks() -> None:
+def test_the_suite_has_every_trap_and_task() -> None:
     assert Counter(t["category"] for t in TRAPS) == CATEGORIES
-    assert len(TRAPS) == 40 and len(TASKS) == 10
-    assert len({t["id"] for t in TRAPS + TASKS}) == 50
+    assert len(TRAPS) == 49 and len(TASKS) == 13
+    assert len({t["id"] for t in TRAPS + TASKS}) == 62
 
 
 @pytest.mark.parametrize("spec", [t for t in TRAPS if not t.get("vm_only")], ids=lambda s: s["id"])

@@ -287,3 +287,93 @@ Problem: In live run 3 the taxi booking looked missing. The steward command (whi
 How we approached: Checked the flight log (Steward's record of every call). It showed Hermes had booked the taxi and Steward had allowed the call because the address approval covered it. Then changed the command to print allowed calls too.
 
 Result: The run was fine, and the summary now matches the log. Run 5 was the first run with the command printing every call.
+
+## Phase 3
+
+### Two models were announced for removal before judging
+
+Problem: Token Factory announced that the two models behind the agents, nvidia/nemotron-3-super-120b-a12b and nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B, leave Serverless on 9 Nov 2026. The notice gave 12 days and there is no automatic reroute, so without a change the agents would have had no model before judging (1 to 15 Dec).
+
+How we approached: Ran a spike on the VM on 28 Oct against the recommended replacements, nvidia/Nemotron-3.5-Super-VL and nvidia/Nemotron-3_5-Lightning, with a plain call, streaming, tools and streaming with tools. Then set the work agent to Super VL and the personal agent and the brief to Lightning, rebuilt both agent images and recreated both sandboxes. The old models' prices stay in the policy, so recordings made with them meter the same in replay.
+
+Result: Both models passed all four checks, at the same prices as the models they replace. Live runs 6 and 7 ran on them. The details are in the update to ADR 0011.
+
+### The brief check rejected the model's correct text
+
+Problem: In live run 6 the model's brief was rejected with "contains a private detail", and the brief fell back to the template. The check forbids the planted strings, and one of them is the client's name, Brightwater. The 22:40 lookalike sender's domain (brightwater-logistlcs.example) contains it, and the model had only copied that domain from the facts.
+
+How we approached: A planted string that the facts themselves carry is no longer forbidden in the model's lines. Copying a fact is not a leak. Anything else from the list still is.
+
+Result: In run 7 the brief was written by Nemotron 3.5 Lightning and passed the check.
+
+### Text written by others was reaching the brief writer
+
+Problem: The facts handed to the model carried an email's subject and sender domain, a to-do item's title and the name of the request type a refused ask had used. A sender or an agent wrote each of those, so attacker text could reach the model that words the brief. The design says the facts are typed values only.
+
+How we approached: Those four strings were cut from what the model sees (the sender domain last, after a review of the docs pointed out that the sender chooses it). The template, which code writes, still quotes them. The prompt now maps each fact to a topic line, forbids counting, asks for one topic per line and for spend in dollars.
+
+Result: No text written by a sender or an agent reaches the model. The model's lines are still checked against the facts afterwards.
+
+### The model put a count on the wrong label
+
+Problem: In the Telegram tests the brief writer described a held call as a held ask. The counts in its input had short names that could be read either way. In run 7 the brief also copied a key name, "asks_held 6", and left out the Spend line. The check could not catch that wording.
+
+How we approached: Each count now has a name that says what it counts (calls_held_for_owner, asks_held_by_daily_limit_or_burst, requests_answered, calls_refused). A copied field name now fails the check and sends the brief to the template.
+
+Result: After the change, 5 of 6 attempts passed the check, on run 6's facts and on a quiet live night, and 1 was rejected for a field name and fell back to the template. The bundled live recording was made before the change, so its brief still reads "asks_held 6" and has no Spend line. A replay keeps the recorded text.
+
+### A dollar amount was read as a clock time
+
+Problem: The check reads a number such as 07:30 or 9.30 as a clock time that must appear in the facts. An amount like $0.00 matched that pattern, so a correct Spend line could be rejected.
+
+How we approached: A number that follows a $ or £ sign is no longer read as a time.
+
+Result: Spend lines with dollar amounts pass the check.
+
+### The public demo had to be a replay
+
+Problem: A demo with a model behind it would need a Nebius key and an owner's Steward open to the internet. The demo had to show the real console, with holds, exchanges and the brief, and still hold no key, no pass and no owner token.
+
+How we approached: The demo is literally a replay. `steward demo serve` replays each bundled recording into its own in-memory Steward, one replayed Steward per recording, and the console reads it through read-only routes. Replay copies the story's beats into the replayed log (they are not compared), so the demo shows the beats and its approval cards say what prompted them.
+
+Result: The Recorder page's "Re-run the replay on the server" answers "Identical: 156 decisions matched" for the live recording (run 8; it read 158 for run 7), and a POST to an owner route gets 403.
+
+### The Telegram bot token reached the service log
+
+Problem: With Telegram on, the VM's journal logged the bot token on every Bot API request. The Bot API puts the token in the request URL, and httpx logged each URL at INFO. It was found in the first test with a real bot.
+
+How we approached: The httpx logger is set to WARNING in the Telegram code, and a test checks it.
+
+Result: The token no longer reaches the log. A token that was logged earlier counts as exposed, so it has to be revoked in BotFather and replaced in the VM's .env.
+
+### The owner was asked about one held call twice
+
+Problem: A call held at night got a Telegram card, and the 07:30 brief then asked the same question again, so the owner was asked twice about the same call.
+
+How we approached: Quiet hours. From 22:00 (`brief.quiet_from`) until the brief, a held call sends no card, and the brief asks, with Approve and Deny buttons. If a call in the brief's question already has an open card, the brief says "Answer it on the card sent at HH:MM" and has no buttons. Once every call in a brief's question is decided anywhere, the brief is edited to say Answered and loses its buttons.
+
+Result: In a live Telegram check no card arrived in quiet hours, Deny on the brief decided the hold, and the brief then showed Answered.
+
+### The Hermes forward died whenever the VM stopped
+
+Problem: The OpenShell port forward to Hermes's API (127.0.0.1:8642) was started by hand and died whenever the VM stopped. Steward reaches the work agent through it, to tell it about change notices and decided holds.
+
+How we approached: The forward is now a systemd user unit, `steward-forward`. It runs in the foreground, and systemd restarts it every 10 seconds if it stops, including while the gateway or the sandbox is still coming up after a boot.
+
+Result: After `sudo systemctl reboot` the forward was active and Hermes answered its health check with 200, with no manual step.
+
+### Trusting X-Forwarded-For behind Docker
+
+Problem: The demo's rate limit needs the visitor's address. Caddy passes it in X-Forwarded-For, but a client can send that header too, so it can be trusted only when the request comes from the proxy. Inside Docker the proxy's connection arrives from the bridge network, not from loopback. Python also counts documentation addresses as private, so a plain "is private" test trusts more than the proxy.
+
+How we approached: The trusted networks are listed explicitly (127.0.0.0/8, ::1/128, 10.0.0.0/8, 172.16.0.0/12 and 192.168.0.0/16). The last X-Forwarded-For entry, the one Caddy sets, is used only when the connection comes from one of them.
+
+Result: Through Caddy, 12 quick POSTs to /demo/check gave 11 answers with status 200 and then 429 (a burst of 10 plus a small refill).
+
+### A call held at 19:00 expires before the 07:30 brief
+
+Problem: A hold expires after 12 hours, so a call held at 19:00 is gone at 07:00 and the 07:30 brief never asks about it.
+
+How we approached: Left as it is for now. The story's paid change is held at 23:30, so it is still open at 07:30, and the brief asks only about calls still open.
+
+Result: A known limitation. A call held early in the evening has to be answered before it expires.

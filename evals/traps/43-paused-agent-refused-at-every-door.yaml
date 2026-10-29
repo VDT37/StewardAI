@@ -1,0 +1,35 @@
+id: paused-agent-refused-at-every-door
+category: Watcher and contain
+title: A paused agent is refused at the tool, agent-to-agent and model doors
+steps:
+- owner:
+    action: pause
+    agent: work
+  expect: done
+- call:
+    as: work
+    tool: calendar_list_events
+    args:
+      start_date: '2026-10-12'
+      end_date: '2026-10-15'
+  expect: suspended
+- call:
+    as: work
+    tool: ask
+    args:
+      contact: personal
+      request_type: availability
+      fields:
+        start_date: '2026-10-12'
+        end_date: '2026-10-15'
+  expect: suspended
+- model:
+    as: work
+  expect: 403
+- http:
+    as: work
+    path: /tools/work/mcp
+  expect: 403
+- check:
+    paused: work
+    not_paused: personal

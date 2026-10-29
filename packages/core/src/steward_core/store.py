@@ -13,6 +13,10 @@ Phase 2 adds holds (calls waiting for the owner, locked to a fingerprint), inten
 once: a unique idempotency key per approved call) and stand_ins (address stand-ins and what
 they are bound to).
 
+Phase 3 adds controls (an agent paused or revoked, a tool turned off for one agent, the owner's
+verdict on a suspected phishing message), kept so a restart does not undo them, and job_runs
+(the last scheduled time each job ran, per counter scope, so a restart never runs a job twice).
+
 One connection, one writer lock: appends read the last hash and insert inside one
 BEGIN IMMEDIATE transaction, so the chain cannot fork. The SQL avoids SQLite-only types so the
 same statements work on PostgreSQL if the store is ever swapped.
@@ -105,6 +109,20 @@ CREATE TABLE IF NOT EXISTS stand_ins (
     token TEXT NOT NULL,
     data TEXT NOT NULL,
     PRIMARY KEY (session_id, token)
+);
+CREATE TABLE IF NOT EXISTS controls (
+    agent TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    target TEXT NOT NULL,
+    data TEXT NOT NULL,
+    since TEXT NOT NULL,
+    PRIMARY KEY (agent, kind, target)
+);
+CREATE TABLE IF NOT EXISTS job_runs (
+    job TEXT NOT NULL,
+    scope TEXT NOT NULL,
+    due TEXT NOT NULL,
+    PRIMARY KEY (job, scope)
 );
 """
 
@@ -283,16 +301,26 @@ class Store:
         after_seq: int | None = None,
         limit: int = 100,
         newest_first: bool = True,
+        session_id: str | None = None,
+        since_ts: str | None = None,
     ) -> list[Event]:
         clauses: list[str] = []
         params: list[Any] = []
-        for column, value in (("agent", agent), ("kind", kind), ("door", door)):
+        for column, value in (
+            ("agent", agent),
+            ("kind", kind),
+            ("door", door),
+            ("session_id", session_id),
+        ):
             if value is not None:
                 clauses.append(f"{column} = ?")
                 params.append(value)
         if after_seq is not None:
             clauses.append("seq > ?")
             params.append(after_seq)
+        if since_ts is not None:
+            clauses.append("ts >= ?")
+            params.append(since_ts)
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         order = "DESC" if newest_first else "ASC"
         params.append(max(1, min(limit, 5000)))
@@ -353,11 +381,13 @@ class Store:
         *,
         until_ts: str | None = None,
         session_id: str | None = None,
+        kind: str = "model.call",
     ) -> Decimal:
         """Sum of cost_usd over the agent's model calls in [since_ts, until_ts), optionally
-        within one session (a scenario run counts only its own spend)."""
-        query = "SELECT payload FROM events WHERE agent = ? AND kind = 'model.call' AND ts >= ?"
-        params: list[Any] = [agent, since_ts]
+        within one session (a scenario run counts only its own spend). kind picks the event
+        kind (the helper's calls are logged as helper.call)."""
+        query = "SELECT payload FROM events WHERE agent = ? AND kind = ? AND ts >= ?"
+        params: list[Any] = [agent, kind, since_ts]
         if until_ts is not None:
             query += " AND ts < ?"
             params.append(until_ts)
@@ -555,6 +585,89 @@ class Store:
                 "SELECT data FROM stand_ins WHERE session_id = ? ORDER BY token", (session_id,)
             ).fetchall()
         return [json.loads(row[0]) for row in rows]
+
+    # Controls (Phase 3) -----------------------------------------------------------------------
+
+    def set_control(
+        self, agent: str, kind: str, target: str, data: dict[str, Any], since: str
+    ) -> None:
+        """kind: paused, revoked, tool_off (target = the exposed tool name) or mail_verdict
+        (target = the message id). target is "" when the control is about the whole agent."""
+        with self._lock:
+            self._conn.execute(
+                "INSERT INTO controls (agent, kind, target, data, since) VALUES (?, ?, ?, ?, ?) "
+                "ON CONFLICT (agent, kind, target) DO UPDATE SET data = excluded.data, "
+                "since = excluded.since",
+                (agent, kind, target, jcs(data).decode("utf-8"), since),
+            )
+
+    def clear_control(self, agent: str, kind: str, target: str = "") -> bool:
+        with self._lock:
+            cursor = self._conn.execute(
+                "DELETE FROM controls WHERE agent = ? AND kind = ? AND target = ?",
+                (agent, kind, target),
+            )
+        return cursor.rowcount == 1
+
+    def controls(self, kind: str | None = None) -> list[dict[str, Any]]:
+        query = "SELECT agent, kind, target, data, since FROM controls"
+        params: list[Any] = []
+        if kind is not None:
+            query += " WHERE kind = ?"
+            params.append(kind)
+        with self._lock:
+            rows = self._conn.execute(query + " ORDER BY agent, kind, target", params).fetchall()
+        return [
+            {
+                "agent": str(row[0]),
+                "kind": str(row[1]),
+                "target": str(row[2]),
+                "data": json.loads(row[3]),
+                "since": str(row[4]),
+            }
+            for row in rows
+        ]
+
+    # Scheduled jobs (Phase 3) -----------------------------------------------------------------
+
+    def last_job_run(self, job: str, scope: str) -> str | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT due FROM job_runs WHERE job = ? AND scope = ?", (job, scope)
+            ).fetchone()
+        return None if row is None else str(row[0])
+
+    def claim_job_run(self, job: str, scope: str, due: str) -> bool:
+        """Record that the run due at `due` started. False if it (or a later one) already did,
+        so one due time never runs twice, even across a restart."""
+        with self._lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                row = self._conn.execute(
+                    "SELECT due FROM job_runs WHERE job = ? AND scope = ?", (job, scope)
+                ).fetchone()
+                if row is not None and str(row[0]) >= due:
+                    self._conn.execute("ROLLBACK")
+                    return False
+                self._conn.execute(
+                    "INSERT INTO job_runs (job, scope, due) VALUES (?, ?, ?) "
+                    "ON CONFLICT (job, scope) DO UPDATE SET due = excluded.due",
+                    (job, scope, due),
+                )
+                self._conn.execute("COMMIT")
+            except BaseException:
+                self._conn.execute("ROLLBACK")
+                raise
+        return True
+
+    def backup_to(self, path: Path | str) -> None:
+        """A consistent copy of the whole database (SQLite's online backup API)."""
+        target = sqlite3.connect(str(path))
+        try:
+            with self._lock:
+                self._conn.backup(target)
+        finally:
+            target.close()
 
 
 def _hold_row(hold: Hold) -> tuple[Any, ...]:
