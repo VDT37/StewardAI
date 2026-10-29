@@ -102,9 +102,9 @@ def test_a_held_call_is_asked_once(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     first = out["first_brief"]
     assert first["reply_markup"] is None and "Answer it on the card sent at 21:00." in first["text"]
     texts = [e["text"] for e in out["edited_after_card"]]
-    assert any("Held for you" in t and "Denied. Nothing was sent" in t for t in texts)
-    assert any("Morning brief" in t and "Denied. Nothing was sent" in t for t in texts)
+    assert any("Held for you" in t and "Denied</b>" in t for t in texts)
+    assert any("Morning brief" in t and "Denied</b>" in t for t in texts)
     night_card = out["overnight_card"]
     assert "Held for you" in night_card["text"] and night_card["reply_markup"] is not None
     assert out["press"] == "Done: the hold is now denied." and out["night_state"] == "denied"
-    assert sum("Denied. Nothing was sent" in e["text"] for e in out["edited"]) == 3
+    assert sum("Denied</b>" in e["text"] for e in out["edited"]) == 3

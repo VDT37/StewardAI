@@ -84,8 +84,8 @@ OUTCOMES = {
     "done": "\u2705 Approved, and it ran once",
     "failed": "\u26a0\ufe0f Approved, but the call failed",
     "unknown": "\u26a0\ufe0f Approved, outcome unknown",
-    "denied": "\u274c Denied. Nothing was sent",
-    "expired": "\u231b Expired unanswered. Nothing was sent",
+    "denied": "\u274c Denied",
+    "expired": "\u231b Expired unanswered",
 }
 
 
@@ -366,7 +366,7 @@ class TelegramCards:
                 [(h.hold_id, choice["id"], h.fingerprint) for h in holds],
                 time.monotonic() + ttl_s,
             )
-            label = f"{choice['label']} all {len(holds)}"
+            label = f"{choice['label']} (all {len(holds)})"
             row.append(InlineKeyboardButton(label, callback_data=f"q:{token}"))
         text = group_html(holds, prompted_by(self.runtime, holds[0]))
         async with self._send_lock:
