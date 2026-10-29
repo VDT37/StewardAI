@@ -212,3 +212,19 @@ def test_a_hold_that_expires_while_the_owner_looks_replays(tmp_path: Path) -> No
 
     result = asyncio.run(scenario())
     assert result["ok"], result["first_difference"]
+
+
+def test_the_demo_night_lands_each_beat_on_the_wall_clock() -> None:
+    from steward_core.clock import LONDON
+    from steward_gateway.scenario import DEMO_NIGHT, wall_time
+
+    def london(day: int, hhmm: str) -> dt.datetime:
+        hours, minutes = (int(x) for x in hhmm.split(":"))
+        return dt.datetime(2026, 10, day, hours, minutes, tzinfo=LONDON)
+
+    # Later the same evening, after midnight (the next day), and a beat the run is late for.
+    assert wall_time("19:40", london(29, "19:30")) == london(29, "19:40")
+    assert wall_time("00:30", london(29, "23:50")) == london(30, "00:30")
+    assert wall_time("19:40", london(29, "19:45")) == london(29, "19:45")
+    # The night's beats fall while the story's owner sleeps, and the brief comes at 03:30.
+    assert DEMO_NIGHT["22:40"] == "23:45" and DEMO_NIGHT["07:30"] == "03:30"

@@ -114,11 +114,11 @@ def test_telegram_presses_decide_only_for_the_owner(tmp_path: Path) -> None:
     html, stranger, owner, again, expired, state = asyncio.run(scenario())
     # The card escapes what the agent wrote, so it cannot inject Telegram HTML.
     assert "&lt;b&gt;then&lt;/b&gt; &amp; after" in html and "<b>then</b>" not in html
-    assert "Locked to:" in html
+    assert "Locked to" in html and "<b>Why</b>" in html
     # The choices are the buttons; the card does not repeat them.
     assert "Choices:" not in html
     shown = card_html(hold_for_card(), "Steward's change notice at 23:30, which started this run.")
-    assert "<b>Prompted by:</b> Steward&#x27;s change notice at 23:30" in shown
+    assert "<b>Prompted by</b>\nSteward&#x27;s change notice at 23:30" in shown
     assert stranger == "Not allowed."
     assert owner == "Done: the hold is now denied." and state == "denied"
     assert again.startswith("This button has expired")

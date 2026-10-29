@@ -1,7 +1,7 @@
 """The steward command (Phase 2 Part F).
 
     steward scenario manchester --mode live [--approvals scripted|manual|owner-first]
-        [--speed 60 | --real-time] [--owner-wait-min 15]
+        [--speed 60 | --real-time | --demo-night] [--owner-wait-min 15]
     steward scenario manchester --mode replay [--recording FILE | --from-server] [--session ID]
     steward replay FILE [--session ID]
     steward demo record-scripted [--out FILE]
@@ -118,12 +118,19 @@ async def live(args: argparse.Namespace) -> int:
                 "attacks": args.attacks,
                 "real_time": args.real_time,
                 "owner_wait_min": args.owner_wait_min,
+                "plan": "demo-night" if args.demo_night else None,
             },
         )
         if response.status_code >= 400:
             print(f"could not start: HTTP {response.status_code} {response.text}", file=sys.stderr)
             return 2
-    pace = "real time" if args.real_time else f"speed {args.speed}"
+    pace = (
+        "the demo night plan"
+        if args.demo_night
+        else "real time"
+        if args.real_time
+        else f"speed {args.speed}"
+    )
     print(f"scenario {args.name} started (approvals {args.approvals}, {pace})")
     return await follow(args.base_url, token, after)
 
@@ -258,6 +265,11 @@ def main(argv: list[str] | None = None) -> int:
         "--real-time",
         action="store_true",
         help="play the evening at the clock's own pace (12 h 35 min), no fast-forward",
+    )
+    scenario.add_argument(
+        "--demo-night",
+        action="store_true",
+        help="pace the story to the wall clock: night beats 23:45 to 02:30, the brief at 03:30",
     )
     scenario.add_argument(
         "--owner-wait-min",

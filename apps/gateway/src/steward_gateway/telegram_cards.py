@@ -12,7 +12,9 @@ one poller per bot token may run, so never start a second Steward with the same 
 
 Phase 3: the morning brief goes to the same chat, with Approve and Deny buttons for its one
 question. A question can cover several holds (a train and a taxi for one trip): its buttons
-decide each of them with its own stored fingerprint.
+decide each of them with its own stored fingerprint. Calls held in the quiet hours send no card
+while the owner sleeps; right after the brief they arrive as cards (calls of one agent held by
+the same rule share one card), so everything held overnight can be decided from the phone.
 """
 
 from __future__ import annotations
@@ -76,24 +78,108 @@ def in_quiet_hours(moment: datetime, quiet_from: str | None, until: str) -> bool
     return now >= quiet_from or now < until
 
 
+AGENTS = {"work": "Work agent", "personal": "Personal agent"}
+OUTCOMES = {
+    "approved": "\u2705 Approved",
+    "done": "\u2705 Approved, and it ran once",
+    "failed": "\u26a0\ufe0f Approved, but the call failed",
+    "unknown": "\u26a0\ufe0f Approved, outcome unknown",
+    "denied": "\u274c Denied. Nothing was sent",
+    "expired": "\u231b Expired unanswered. Nothing was sent",
+}
+
+
+def _clip(text: str, limit: int) -> str:
+    """Shorten before escaping, so an HTML entity is never cut in half."""
+    text = " ".join(text.split())
+    return text if len(text) <= limit else text[: limit - 1].rstrip() + "\u2026"
+
+
+def _call_lines(hold: Hold) -> list[str]:
+    args = hold.args.get("arguments", hold.args) if isinstance(hold.args, dict) else hold.args
+    lines = [f"<code>{html.escape(hold.tool)}</code>"]
+    if isinstance(args, dict):
+        flat: dict[str, Any] = {}
+        for key, value in args.items():
+            if isinstance(value, dict):
+                flat.update(value)
+            else:
+                flat[key] = value
+        for key, value in list(flat.items())[:8]:
+            lines.append(f"\u2022 {html.escape(str(key))}: {html.escape(_clip(str(value), 90))}")
+    elif args:
+        lines.append(html.escape(_clip(str(args), 200)))
+    return lines
+
+
 def card_html(hold: Hold, prompted: str | None = None) -> str:
     """The card: what is held, the rule, what started the agent's run, the call and the
-    fingerprint (HTML parse mode). The choices are the buttons, so they are not repeated."""
-    what = hold.details.get("card") or f"The {hold.agent} agent called {hold.tool}."
-    args = hold.args.get("arguments", hold.args) if isinstance(hold.args, dict) else hold.args
-    lines = [
-        f"<b>Held:</b> {html.escape(str(what))}",
-        f"<b>Why:</b> {html.escape(hold.reason)}",
+    fingerprint (HTML parse mode), one short block each. The choices are the buttons."""
+    what = hold.details.get("card") or f"The {hold.agent} agent wants to call {hold.tool}."
+    who = AGENTS.get(hold.agent, hold.agent)
+    blocks = [
+        f"\u23f8\ufe0f <b>Held for you</b> \u00b7 {html.escape(who)}\n"
+        f"{html.escape(_clip(str(what), 300))}",
+        f"<b>Why</b>\n{html.escape(_clip(hold.reason, 300))}",
     ]
     if prompted:
-        lines.append(f"<b>Prompted by:</b> {html.escape(prompted)}")
-    lines += [
-        f"<b>Call:</b> <code>{html.escape(hold.tool)}</code> "
-        f"<code>{html.escape(str(args))[:300]}</code>",
-        f"<b>Locked to:</b> fingerprint <code>{short_fingerprint(hold.fingerprint)}</code>. "
-        "Any change voids the approval.",
+        blocks.append(f"<b>Prompted by</b>\n{html.escape(_clip(prompted, 220))}")
+    blocks.append("<b>Call</b>\n" + "\n".join(_call_lines(hold)))
+    blocks.append(
+        f"\U0001f512 Locked to <code>{short_fingerprint(hold.fingerprint)}</code>. "
+        "Any change voids the approval."
+    )
+    return "\n\n".join(blocks)
+
+
+def outcome_line(states: list[str]) -> str:
+    shown = [OUTCOMES.get(s, s) for s in sorted(set(states))]
+    return "\n\n<b>" + html.escape("; ".join(shown)) + "</b>"
+
+
+def group_html(holds: list[Hold], prompted: str | None = None) -> str:
+    """One card for several calls of one agent held by the same rule while the owner slept."""
+    first = holds[0]
+    who = AGENTS.get(first.agent, first.agent)
+    items = []
+    for hold in holds[:12]:
+        what = hold.details.get("card") or _summary(hold)
+        items.append(f"\u2022 {html.escape(_clip(str(what), 120))}")
+    blocks = [
+        f"\U0001f319 <b>Held while you slept</b> \u00b7 {html.escape(who)}\n"
+        f"{len(holds)} calls held by the same rule",
+        f"<b>Why</b>\n{html.escape(_clip(first.reason, 300))}",
     ]
-    return "\n".join(lines)
+    if prompted:
+        blocks.append(f"<b>Prompted by</b>\n{html.escape(_clip(prompted, 220))}")
+    blocks.append("<b>Calls</b>\n" + "\n".join(items))
+    blocks.append("\U0001f512 Each call is locked to its own fingerprint.")
+    return "\n\n".join(blocks)
+
+
+def _summary(hold: Hold) -> str:
+    args = hold.args.get("arguments", hold.args) if isinstance(hold.args, dict) else hold.args
+    if hold.tool == "ask" and isinstance(args, dict):
+        fields = args.get("fields") or {}
+        days = " to ".join(dict.fromkeys(str(v) for v in fields.values())) if fields else ""
+        return f"ask {args.get('request_type')} {days}".strip()
+    return f"{hold.tool} {args}"
+
+
+def brief_html(text: str) -> str:
+    """The brief, one topic per block: "Topic: words" becomes a bold topic over its words."""
+    blocks = ["\u2600\ufe0f <b>Morning brief</b>"]
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        topic, sep, rest = line.partition(": ")
+        if sep and len(topic) <= 30:
+            icon = "\u2753 " if topic.lower().startswith("one question") else ""
+            blocks.append(f"{icon}<b>{html.escape(topic)}</b>\n{html.escape(rest)}")
+        else:
+            blocks.append(html.escape(line))
+    return "\n\n".join(blocks)
 
 
 class TelegramCards:
@@ -161,20 +247,20 @@ class TelegramCards:
         await self.close_card(hold)
         await self.close_briefs(hold)
 
-    def button_token(self, hold: Hold, choice: str) -> str:
+    def button_token(self, hold: Hold, choice: str, ttl_s: float | None = None) -> str:
         token = secrets.token_urlsafe(9)
-        ttl = self.runtime.settings.policy.holds.link_minutes * 60
+        ttl = ttl_s if ttl_s is not None else self.runtime.settings.policy.holds.link_minutes * 60
         self.buttons[token] = ButtonToken(hold.hold_id, choice, time.monotonic() + ttl)
         return token
 
-    async def send_card(self, hold: Hold) -> None:
+    async def send_card(self, hold: Hold, ttl_s: float | None = None) -> None:
         from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
         keyboard = InlineKeyboardMarkup(
             [
                 [
                     InlineKeyboardButton(
-                        c["label"], callback_data=f"d:{self.button_token(hold, c['id'])}"
+                        c["label"], callback_data=f"d:{self.button_token(hold, c['id'], ttl_s)}"
                     )
                     for c in hold.choices
                 ]
@@ -201,8 +287,7 @@ class TelegramCards:
             await self._app.bot.edit_message_text(
                 chat_id=self.owner_id,
                 message_id=message_id,
-                text=card_html(hold, prompted_by(self.runtime, hold))
-                + f"\n\n<b>Now:</b> {html.escape(hold.state)}",
+                text=card_html(hold, prompted_by(self.runtime, hold)) + outcome_line([hold.state]),
                 parse_mode="HTML",
             )
             await asyncio.sleep(SEND_GAP_S)
@@ -218,7 +303,7 @@ class TelegramCards:
         from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
         markup = None
-        lines = [html.escape(line) for line in text.splitlines() if line.strip()]
+        lines = [brief_html(text)]
         question = facts.question
         carded = (
             [h.hold_id for h in question.holds if h.hold_id in self.messages] if question else []
@@ -227,7 +312,7 @@ class TelegramCards:
             times = sorted({self.card_times.get(h, "") for h in carded} - {""})
             sent = f" sent at {', '.join(times)}" if times else ""
             plural = "s" if len(carded) > 1 else ""
-            lines.append(f"Answer it on the card{plural}{sent}.")
+            lines.append(f"\U0001f449 Answer it on the card{plural}{sent}.")
         elif question is not None:
             # A brief's question stays answerable all morning (until the holds expire).
             ttl = self.runtime.settings.policy.holds.expires_hours * 3600
@@ -240,7 +325,7 @@ class TelegramCards:
                 )
                 rows.append(InlineKeyboardButton(label, callback_data=f"q:{token}"))
             markup = InlineKeyboardMarkup([rows])
-        body = "<b>Morning brief</b>\n" + "\n".join(lines)
+        body = "\n\n".join(lines)
         async with self._send_lock:
             message = await self._app.bot.send_message(
                 chat_id=self.owner_id,
@@ -252,6 +337,46 @@ class TelegramCards:
                 self.briefs[message.message_id] = BriefMessage(
                     body, tuple(h.hold_id for h in question.holds)
                 )
+            await asyncio.sleep(SEND_GAP_S)
+        skip = {h.hold_id for h in question.holds} if question else set()
+        await self.send_overnight(skip)
+
+    async def send_overnight(self, skip: set[str]) -> None:
+        """After the brief: the calls held in the quiet hours that still wait, as cards. Calls of
+        one agent held by the same rule share one card with one button per choice."""
+        ttl = self.runtime.settings.policy.holds.expires_hours * 3600
+        groups: dict[tuple[str, str], list[Hold]] = {}
+        for hold in self.runtime.holds.pending():
+            if hold.hold_id in skip or hold.hold_id in self.messages or not self.quiet(hold):
+                continue
+            groups.setdefault((hold.agent, hold.rule), []).append(hold)
+        for holds in groups.values():
+            if len(holds) == 1:
+                await self.send_card(holds[0], ttl)
+            else:
+                await self.send_group(holds, ttl)
+
+    async def send_group(self, holds: list[Hold], ttl_s: float) -> None:
+        from telegram import InlineKeyboardButton, InlineKeyboardMarkup
+
+        row = []
+        for choice in holds[0].choices:
+            token = secrets.token_urlsafe(9)
+            self.questions[token] = QuestionToken(
+                [(h.hold_id, choice["id"], h.fingerprint) for h in holds],
+                time.monotonic() + ttl_s,
+            )
+            label = f"{choice['label']} all {len(holds)}"
+            row.append(InlineKeyboardButton(label, callback_data=f"q:{token}"))
+        text = group_html(holds, prompted_by(self.runtime, holds[0]))
+        async with self._send_lock:
+            message = await self._app.bot.send_message(
+                chat_id=self.owner_id,
+                text=text,
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup([row]),
+            )
+            self.briefs[message.message_id] = BriefMessage(text, tuple(h.hold_id for h in holds))
             await asyncio.sleep(SEND_GAP_S)
 
     async def close_briefs(self, hold: Hold) -> None:
@@ -269,8 +394,7 @@ class TelegramCards:
                 await self._app.bot.edit_message_text(
                     chat_id=self.owner_id,
                     message_id=message_id,
-                    text=brief.text
-                    + f"\n\n<b>Answered:</b> {html.escape(', '.join(sorted(set(states))))}",
+                    text=brief.text + outcome_line(states),
                     parse_mode="HTML",
                 )
                 await asyncio.sleep(SEND_GAP_S)

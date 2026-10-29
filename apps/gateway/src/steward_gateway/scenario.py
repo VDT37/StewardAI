@@ -14,6 +14,12 @@ anything overnight. With approvals="owner-first" the owner decides in the consol
 and whatever is still held after owner_wait_s gets the scripted decision, so the story goes on
 while the owner is away.
 
+The demo night (plan="demo-night") keeps the story's own times but paces them to the owner's
+wall clock: each beat lands at a fixed London time (DEMO_NIGHT), so the evening plays while the
+owner is up, the night's beats fall between 23:45 and 02:30 while the story's owner sleeps (the
+quiet hours: no cards), and the 07:30 brief arrives at 03:30, followed by the night's held calls
+as cards. Between two beats the story clock runs at whatever rate lands it on time.
+
 Two kinds of actors appear in the log. Real agents (Hermes, and OpenClaw answering asks) act
 through their passes. Scripted actors replay what overnight_script.json says an agent does (the
 to-do writes) and, at 22:40 with attacks="fallback", play the tricked work agent if Hermes did
@@ -27,6 +33,7 @@ import time
 from datetime import datetime, timedelta
 from typing import Any
 
+from steward_core.clock import LONDON
 from steward_core.store import Hold
 from steward_fixtures import at, load_raw, overnight_changes
 from steward_gateway.adapters import HermesRunsAdapter
@@ -59,6 +66,34 @@ DECISIONS = {
 }
 
 
+# The demo night: story beat -> London wall time, and minutes to wait for the owner per decision.
+DEMO_NIGHT = {
+    "19:06": "19:40",
+    "21:15": "21:45",
+    "22:40": "23:45",
+    "23:30": "00:30",
+    "00:50": "01:30",
+    "01:30": "02:30",
+    "07:30": "03:30",
+    "07:35": "03:35",
+}
+DEMO_NIGHT_WAITS = {"19:06": 90.0, "07:35": 210.0}
+PLANS = {"demo-night": (DEMO_NIGHT, DEMO_NIGHT_WAITS)}
+
+
+def wall_time(hhmm: str, now: datetime) -> datetime:
+    """The next London wall time hh:mm at or after now; a target missed by under six hours is
+    taken as now (the run is late, so the beat goes at once)."""
+    hours, minutes = (int(x) for x in hhmm.split(":"))
+    local = now.astimezone(LONDON)
+    candidate = local.replace(hour=hours, minute=minutes, second=0, microsecond=0)
+    if candidate < local:
+        if local - candidate < timedelta(hours=6):
+            return local
+        candidate += timedelta(days=1)
+    return candidate
+
+
 def start_scenario(
     rt: Runtime,
     name: str,
@@ -67,6 +102,7 @@ def start_scenario(
     attacks: str,
     real_time: bool = False,
     owner_wait_min: float = BEAT_WAIT_S / 60,
+    plan: str | None = None,
 ) -> dict[str, Any]:
     if name != NAME:
         raise ValueError(f"unknown scenario {name!r} (known: {NAME})")
@@ -76,16 +112,30 @@ def start_scenario(
         raise ValueError("attacks must be fallback, agent or scripted")
     if not 0 < owner_wait_min <= 12 * 60:
         raise ValueError("owner_wait_min must be above 0 and at most 720")
+    if plan is not None and plan not in PLANS:
+        raise ValueError(f"unknown plan {plan!r} (known: {', '.join(PLANS)})")
     task = rt.extras.get("scenario_task")
     if isinstance(task, asyncio.Task) and not task.done():
         raise ValueError("a scenario is already running")
     rt.scenario = {"state": "starting", "name": name, "beats": []}
     rt.extras["scenario_task"] = asyncio.get_running_loop().create_task(
         run_manchester(
-            rt, approvals, speed, attacks, real_time=real_time, owner_wait_s=owner_wait_min * 60
+            rt,
+            approvals,
+            speed,
+            attacks,
+            real_time=real_time,
+            owner_wait_s=owner_wait_min * 60,
+            plan=plan,
         )
     )
-    return {"state": "starting", "name": name, "approvals": approvals, "real_time": real_time}
+    return {
+        "state": "starting",
+        "name": name,
+        "approvals": approvals,
+        "real_time": real_time,
+        "plan": plan,
+    }
 
 
 class Runner:
@@ -97,6 +147,7 @@ class Runner:
         attacks: str,
         real_time: bool = False,
         owner_wait_s: float = BEAT_WAIT_S,
+        plan: str | None = None,
     ) -> None:
         self.rt = rt
         self.approvals = approvals
@@ -104,6 +155,7 @@ class Runner:
         self.speed = 1.0 if real_time else speed
         self.real_time = real_time
         self.owner_wait_s = owner_wait_s
+        self.wall, self.waits = PLANS[plan] if plan else ({}, {})
         self.attacks = attacks
         self.anchor = rt.world.anchor
         self.beats: list[dict[str, Any]] = []
@@ -120,7 +172,15 @@ class Runner:
     async def advance_to(self, target: datetime) -> None:
         clock = self.rt.clock
         gap = (target - clock.now()).total_seconds()
-        if gap > 0 and self.speed > 0:
+        beat = target.astimezone(LONDON).strftime("%H:%M")
+        if gap > 0 and beat in self.wall:
+            # Paced to the wall clock: run the story clock at the rate that lands on time.
+            real = datetime.now(LONDON)
+            wait = (wall_time(self.wall[beat], real) - real).total_seconds()
+            if wait > 0:
+                clock.set(clock.now(), rate=gap / wait)
+                await asyncio.sleep(wait)
+        elif gap > 0 and self.speed > 0:
             clock.set(clock.now(), rate=self.speed)
             wait = gap / self.speed
             await asyncio.sleep(wait if self.real_time else min(wait, MAX_GAP_S))
@@ -163,7 +223,7 @@ class Runner:
         wanted = DECISIONS[when]
         if self.approvals in {"manual", "owner-first"}:
             self.beat(f"{when} approvals", actor="owner", mode=self.approvals)
-            deadline = time.monotonic() + self.owner_wait_s
+            deadline = time.monotonic() + self.waits.get(when, self.owner_wait_s / 60) * 60
             while time.monotonic() < deadline and any(
                 self.matching(agent, what) for agent, what, _ in wanted
             ):
@@ -244,8 +304,9 @@ async def run_manchester(
     attacks: str,
     real_time: bool = False,
     owner_wait_s: float = BEAT_WAIT_S,
+    plan: str | None = None,
 ) -> None:
-    runner = Runner(rt, approvals, speed, attacks, real_time, owner_wait_s)
+    runner = Runner(rt, approvals, speed, attacks, real_time, owner_wait_s, plan)
     try:
         session = rt.recorder.new_session(f"scenario:{NAME}:live", scoped=True)
         rt.scenario.update({"state": "running", "session_id": session})
@@ -263,6 +324,7 @@ async def run_manchester(
                 "speed": runner.speed,
                 "real_time": real_time,
                 "owner_wait_min": round(owner_wait_s / 60, 2),
+                "plan": plan,
                 "attacks": attacks,
                 "anchor": runner.anchor.isoformat(),
                 "web_backend": rt.web_backend,

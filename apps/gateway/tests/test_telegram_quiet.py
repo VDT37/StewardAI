@@ -74,7 +74,9 @@ def test_a_held_call_is_asked_once(tmp_path: Path, monkeypatch: pytest.MonkeyPat
             # 07:30: the question is the oldest waiting call, which has a card: no buttons.
             clock.set(story(0, "07:30"), rate=0)
             await rt.scheduler.run_job("brief", clock.now())
-            out["first_brief"] = bot.sent[-1]
+            out["first_brief"] = next(m for m in bot.sent if "Morning brief" in m["text"])
+            # Right after the brief, the call held in the quiet hours arrives as its own card.
+            out["overnight_card"] = bot.sent[-1]
 
             # Deny on the card: the card and the brief both say so.
             hold_id = evening.structured_content["hold_id"]
@@ -84,12 +86,11 @@ def test_a_held_call_is_asked_once(tmp_path: Path, monkeypatch: pytest.MonkeyPat
             await asyncio.sleep(0.05)
             out["edited_after_card"] = list(bot.edited)
 
-            # A second brief asks about the night's call, which never had a card: buttons.
-            clock.set(story(0, "07:31"), rate=0)
-            await rt.scheduler.run_job("brief", clock.now())
-            second = bot.sent[-1]
-            out["second_brief"] = second
-            deny = second["reply_markup"].inline_keyboard[0][1].callback_data
+            # Deny the night's call on the card that came after the brief.
+            card = out["overnight_card"]
+            deny = next(
+                b.callback_data for b in card["reply_markup"].inline_keyboard[0] if b.text == "Deny"
+            )
             out["press"] = await cards.handle_press(42, deny)
             await asyncio.sleep(0.05)
             out["night_state"] = rt.holds.get(night.structured_content["hold_id"]).state  # type: ignore[union-attr]
@@ -101,8 +102,9 @@ def test_a_held_call_is_asked_once(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     first = out["first_brief"]
     assert first["reply_markup"] is None and "Answer it on the card sent at 21:00." in first["text"]
     texts = [e["text"] for e in out["edited_after_card"]]
-    assert any("<b>Now:</b> denied" in t for t in texts)
-    assert any(t.startswith("<b>Morning brief</b>") and "Answered:</b> denied" in t for t in texts)
-    assert out["second_brief"]["reply_markup"] is not None
-    assert out["press"] == "Done: denied" and out["night_state"] == "denied"
-    assert sum("Answered:</b> denied" in e["text"] for e in out["edited"]) == 2
+    assert any("Held for you" in t and "Denied. Nothing was sent" in t for t in texts)
+    assert any("Morning brief" in t and "Denied. Nothing was sent" in t for t in texts)
+    night_card = out["overnight_card"]
+    assert "Held for you" in night_card["text"] and night_card["reply_markup"] is not None
+    assert out["press"] == "Done: the hold is now denied." and out["night_state"] == "denied"
+    assert sum("Denied. Nothing was sent" in e["text"] for e in out["edited"]) == 3

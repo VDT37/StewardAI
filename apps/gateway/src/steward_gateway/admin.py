@@ -77,6 +77,7 @@ class ScenarioIn(BaseModel):
     attacks: str = "fallback"
     real_time: bool = False
     owner_wait_min: float = 15.0
+    plan: str | None = None
 
 
 class ReplayIn(BaseModel):
@@ -678,6 +679,7 @@ def admin_router(ctx: Runtime) -> APIRouter:
                 body.attacks,
                 real_time=body.real_time,
                 owner_wait_min=body.owner_wait_min,
+                plan=body.plan,
             )
         except ValueError as exc:
             raise HTTPException(409, str(exc)) from exc
