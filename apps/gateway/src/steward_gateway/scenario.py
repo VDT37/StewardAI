@@ -8,6 +8,12 @@ writes), the agent runs with fixed prompts, and the owner's approvals at 19:06 a
 (scripted, or left to the owner in the console with approvals="manual"). While agents work the
 clock runs at real speed; the quiet gaps between beats are fast-forwarded at `speed`.
 
+A real-time run (real_time=True) never fast-forwards: the evening takes its full 12 hours 35
+minutes, so the 07:30 brief arrives on the owner's phone in real time, with nobody pressing
+anything overnight. With approvals="owner-first" the owner decides in the console or Telegram,
+and whatever is still held after owner_wait_s gets the scripted decision, so the story goes on
+while the owner is away.
+
 Two kinds of actors appear in the log. Real agents (Hermes, and OpenClaw answering asks) act
 through their passes. Scripted actors replay what overnight_script.json says an agent does (the
 to-do writes) and, at 22:40 with attacks="fallback", play the tricked work agent if Hermes did
@@ -54,29 +60,50 @@ DECISIONS = {
 
 
 def start_scenario(
-    rt: Runtime, name: str, approvals: str, speed: float, attacks: str
+    rt: Runtime,
+    name: str,
+    approvals: str,
+    speed: float,
+    attacks: str,
+    real_time: bool = False,
+    owner_wait_min: float = BEAT_WAIT_S / 60,
 ) -> dict[str, Any]:
     if name != NAME:
         raise ValueError(f"unknown scenario {name!r} (known: {NAME})")
-    if approvals not in {"scripted", "manual"}:
-        raise ValueError("approvals must be scripted or manual")
+    if approvals not in {"scripted", "manual", "owner-first"}:
+        raise ValueError("approvals must be scripted, manual or owner-first")
     if attacks not in {"fallback", "agent", "scripted"}:
         raise ValueError("attacks must be fallback, agent or scripted")
+    if not 0 < owner_wait_min <= 12 * 60:
+        raise ValueError("owner_wait_min must be above 0 and at most 720")
     task = rt.extras.get("scenario_task")
     if isinstance(task, asyncio.Task) and not task.done():
         raise ValueError("a scenario is already running")
     rt.scenario = {"state": "starting", "name": name, "beats": []}
     rt.extras["scenario_task"] = asyncio.get_running_loop().create_task(
-        run_manchester(rt, approvals, speed, attacks)
+        run_manchester(
+            rt, approvals, speed, attacks, real_time=real_time, owner_wait_s=owner_wait_min * 60
+        )
     )
-    return {"state": "starting", "name": name, "approvals": approvals}
+    return {"state": "starting", "name": name, "approvals": approvals, "real_time": real_time}
 
 
 class Runner:
-    def __init__(self, rt: Runtime, approvals: str, speed: float, attacks: str) -> None:
+    def __init__(
+        self,
+        rt: Runtime,
+        approvals: str,
+        speed: float,
+        attacks: str,
+        real_time: bool = False,
+        owner_wait_s: float = BEAT_WAIT_S,
+    ) -> None:
         self.rt = rt
         self.approvals = approvals
-        self.speed = speed
+        # Real time: the clock runs at its own pace and no gap is cut short.
+        self.speed = 1.0 if real_time else speed
+        self.real_time = real_time
+        self.owner_wait_s = owner_wait_s
         self.attacks = attacks
         self.anchor = rt.world.anchor
         self.beats: list[dict[str, Any]] = []
@@ -95,7 +122,8 @@ class Runner:
         gap = (target - clock.now()).total_seconds()
         if gap > 0 and self.speed > 0:
             clock.set(clock.now(), rate=self.speed)
-            await asyncio.sleep(min(gap / self.speed, MAX_GAP_S))
+            wait = gap / self.speed
+            await asyncio.sleep(wait if self.real_time else min(wait, MAX_GAP_S))
         if gap > 0:
             # Land on the beat's time; never move the clock back past an overshoot.
             clock.set(max(target, clock.now()), rate=1.0)
@@ -133,14 +161,17 @@ class Runner:
 
     async def decide(self, when: str) -> None:
         wanted = DECISIONS[when]
-        if self.approvals == "manual":
-            self.beat(f"{when} approvals", actor="owner", mode="manual")
-            deadline = time.monotonic() + BEAT_WAIT_S
+        if self.approvals in {"manual", "owner-first"}:
+            self.beat(f"{when} approvals", actor="owner", mode=self.approvals)
+            deadline = time.monotonic() + self.owner_wait_s
             while time.monotonic() < deadline and any(
                 self.matching(agent, what) for agent, what, _ in wanted
             ):
-                await asyncio.sleep(2.0)
-            return
+                await asyncio.sleep(min(2.0, self.owner_wait_s))
+            if self.approvals == "manual":
+                return
+            # owner-first: the owner had their chance; what is still held gets the scripted
+            # decision below (nothing, if the owner decided everything).
         for agent, what, choice in wanted:
             for hold in self.matching(agent, what):
                 try:
@@ -206,8 +237,15 @@ def _fixture_page() -> str:
     return str(load_raw("web_pages")["pages"][0]["url"])
 
 
-async def run_manchester(rt: Runtime, approvals: str, speed: float, attacks: str) -> None:
-    runner = Runner(rt, approvals, speed, attacks)
+async def run_manchester(
+    rt: Runtime,
+    approvals: str,
+    speed: float,
+    attacks: str,
+    real_time: bool = False,
+    owner_wait_s: float = BEAT_WAIT_S,
+) -> None:
+    runner = Runner(rt, approvals, speed, attacks, real_time, owner_wait_s)
     try:
         session = rt.recorder.new_session(f"scenario:{NAME}:live", scoped=True)
         rt.scenario.update({"state": "running", "session_id": session})
@@ -222,7 +260,9 @@ async def run_manchester(rt: Runtime, approvals: str, speed: float, attacks: str
                 "name": NAME,
                 "mode": "live",
                 "approvals": approvals,
-                "speed": speed,
+                "speed": runner.speed,
+                "real_time": real_time,
+                "owner_wait_min": round(owner_wait_s / 60, 2),
                 "attacks": attacks,
                 "anchor": runner.anchor.isoformat(),
                 "web_backend": rt.web_backend,

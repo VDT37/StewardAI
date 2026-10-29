@@ -1,6 +1,7 @@
 """The steward command (Phase 2 Part F).
 
-    steward scenario manchester --mode live [--approvals scripted|manual] [--speed 60]
+    steward scenario manchester --mode live [--approvals scripted|manual|owner-first]
+        [--speed 60 | --real-time] [--owner-wait-min 15]
     steward scenario manchester --mode replay [--recording FILE | --from-server] [--session ID]
     steward replay FILE [--session ID]
     steward demo record-scripted [--out FILE]
@@ -115,12 +116,15 @@ async def live(args: argparse.Namespace) -> int:
                 "approvals": args.approvals,
                 "speed": args.speed,
                 "attacks": args.attacks,
+                "real_time": args.real_time,
+                "owner_wait_min": args.owner_wait_min,
             },
         )
         if response.status_code >= 400:
             print(f"could not start: HTTP {response.status_code} {response.text}", file=sys.stderr)
             return 2
-    print(f"scenario {args.name} started (approvals {args.approvals}, speed {args.speed})")
+    pace = "real time" if args.real_time else f"speed {args.speed}"
+    print(f"scenario {args.name} started (approvals {args.approvals}, {pace})")
     return await follow(args.base_url, token, after)
 
 
@@ -246,8 +250,21 @@ def main(argv: list[str] | None = None) -> int:
     scenario = commands.add_parser("scenario", help="play or replay a scenario")
     scenario.add_argument("name", choices=["manchester"])
     scenario.add_argument("--mode", choices=["live", "replay"], required=True)
-    scenario.add_argument("--approvals", choices=["scripted", "manual"], default="scripted")
+    scenario.add_argument(
+        "--approvals", choices=["scripted", "manual", "owner-first"], default="scripted"
+    )
     scenario.add_argument("--speed", type=float, default=60.0)
+    scenario.add_argument(
+        "--real-time",
+        action="store_true",
+        help="play the evening at the clock's own pace (12 h 35 min), no fast-forward",
+    )
+    scenario.add_argument(
+        "--owner-wait-min",
+        type=float,
+        default=15.0,
+        help="minutes to wait for the owner's decisions (manual and owner-first)",
+    )
     scenario.add_argument(
         "--attacks", choices=["fallback", "agent", "scripted"], default="fallback"
     )

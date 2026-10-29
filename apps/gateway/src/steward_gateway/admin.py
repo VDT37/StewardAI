@@ -75,6 +75,8 @@ class ScenarioIn(BaseModel):
     approvals: str = "scripted"
     speed: float = 60.0
     attacks: str = "fallback"
+    real_time: bool = False
+    owner_wait_min: float = 15.0
 
 
 class ReplayIn(BaseModel):
@@ -668,7 +670,15 @@ def admin_router(ctx: Runtime) -> APIRouter:
         from steward_gateway.scenario import start_scenario
 
         try:
-            return start_scenario(ctx, body.name, body.approvals, body.speed, body.attacks)
+            return start_scenario(
+                ctx,
+                body.name,
+                body.approvals,
+                body.speed,
+                body.attacks,
+                real_time=body.real_time,
+                owner_wait_min=body.owner_wait_min,
+            )
         except ValueError as exc:
             raise HTTPException(409, str(exc)) from exc
 
