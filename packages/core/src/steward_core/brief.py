@@ -129,12 +129,13 @@ class BriefFacts(_Fact):
 
     def for_model(self) -> dict[str, Any]:
         """What the helper model sees: the facts without ids, fingerprints or the question, and
-        without the few strings someone else wrote (an email's subject, a to-do item's title,
-        the request type a refused ask named), so no attacker text reaches the writer. The
-        template, written by code, still quotes them."""
+        without the few strings someone else wrote (an email's subject and sender domain, a
+        to-do item's title, the request type a refused ask named), so no attacker text reaches
+        the writer. The template, written by code, still quotes them."""
         data = self.model_dump(mode="json", exclude={"brief_id", "question"})
         for mail in data["mail"]:
             mail.pop("subject", None)
+            mail.pop("sender_domain", None)
         for stale in data["stale_writes"]:
             stale.pop("item", None)
         for refused in data["refused"]:
@@ -344,8 +345,9 @@ SYSTEM_PROMPT = (
     "Steward passed on (notices: when, date, start to end). "
     "Shared to-do list: only if stale_writes is not empty, say a write made from an old copy "
     "was held and when. "
-    "Mail: one line per entry in mail: when it arrived, the sender domain, how many links "
-    "Steward withheld, and whether the agent reported it. Leave this line out if mail is empty. "
+    "Mail: one line per entry in mail: a suspected phishing email, when it arrived, how many "
+    "links Steward withheld, and whether the agent reported it. Leave this line out if mail is "
+    "empty. "
     "Watcher: each pause, or 'no agent hit a hard limit' when pauses is empty. "
     "Spend: each agent's spend_usd of its budget_usd, in US dollars with a $ sign and every "
     "digit as given, for example $0.1373 (booking prices are pounds, with a £ sign). Put each "

@@ -128,12 +128,14 @@ def test_a_failed_model_call_falls_back_to_the_template(tmp_path: Path) -> None:
     assert "Watcher: no agent hit a hard limit." in found["text"]
 
 
-def test_copying_a_fact_that_names_a_client_is_not_a_leak(tmp_path: Path) -> None:
-    """The 22:40 lookalike sender's domain carries the client's name; the model may repeat what
-    the facts say, but never a private detail the facts do not carry."""
-    line = "Mail: a suspected phishing email from brightwater-logistlcs.example arrived at 22:40."
+def test_the_writer_sees_no_sender_domain_and_leaks_fail(tmp_path: Path) -> None:
+    """The 22:40 lookalike sender's domain is chosen by the sender (it even carries the client's
+    name), so the model never sees it; the template still names it, and a model line about the
+    mail without it is used. A private detail the facts do not carry fails the check."""
+    line = "Mail: a suspected phishing email arrived at 22:40 and the agent reported it."
     found = brief_with(tmp_path / "copy", completion(line), read_mail="w-msg-poisoned-agenda")
     assert found["source"] == "model", found["problems"]
+    assert "brightwater-logistlcs.example" not in found["sent"][0]["messages"][1]["content"]
     leak = "Mail: the 22:40 email came while Dr Shah was on the calendar."
     found = brief_with(tmp_path / "leak", completion(leak), read_mail="w-msg-poisoned-agenda")
     assert found["source"] == "template" and "contains a private detail" in found["problems"]
