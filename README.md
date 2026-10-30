@@ -179,6 +179,20 @@ Why these two: Token Factory removes `nvidia/nemotron-3-super-120b-a12b` and `nv
 
 The Phase 4 AI check (the Nemotron judge in Results) runs on these same two models, one arm each. The product never uses it. Token Factory also retired several other models on 31 Aug 2026.
 
+## How Nemotron and Token Factory are used
+
+Both agents run on NVIDIA Nemotron, served by Nebius Token Factory. Hermes, the work agent, runs on Nemotron 3.5 Super VL, because it juggles about twenty tools in one evening. OpenClaw, the personal agent, runs on Nemotron 3.5 Lightning, because it only answers a few typed questions. Lightning also writes the morning brief, with reasoning switched off, from facts that code picks.
+
+Steward is the only way to Token Factory. It holds the one key, picks the model for each agent from `config/steward.yaml`, and meters every call against a daily budget using the token counts Token Factory returns. The agents only ever hold a pass.
+
+Where Token Factory sped up the work:
+
+- No GPUs to run. The laptop this was built on cannot run models this size, and the OpenAI-compatible API let both agent frameworks plug in unchanged.
+- Cheap enough to test for real. A full live evening with both agents costs 10 to 20 US cents, so nine evenings could be played end to end and replayed. The comparison of code against a Nemotron judge (about 300 judge calls) cost about 35 cents.
+- Painless model changes. When the first two models were scheduled for retirement on 9 Nov 2026, moving to the Nemotron 3.5 models took one test script (`spikes/token_factory_check.py`) and a change of model ID in the policy.
+
+Token Factory is the only Nebius service used. Steward, the agents and the public demo run on one cloud VM.
+
 ## Other NVIDIA and Nebius tools
 
 | Tool                              | Use                                          |
@@ -192,7 +206,7 @@ The Phase 4 AI check (the Nemotron judge in Results) runs on these same two mode
 
 ### Traps and tasks
 
-All 49 traps and 13 normal tasks pass. The 46 traps that need no sandbox and the 13 tasks are played through a real Steward in process (`uv run pytest evals`). The 3 bypass traps need the real sandboxes and run on the VM (`bash evals/walls.sh`): 7 of 7 wall checks pass. The full test suite is 235 tests, all passing on 29 Oct.
+All 49 traps and 13 normal tasks pass. The 46 traps that need no sandbox and the 13 tasks are played through a real Steward in process (`uv run pytest evals`). The 3 bypass traps need the real sandboxes and run on the VM (`bash evals/walls.sh`): 7 of 7 wall checks pass. The full test suite is 237 tests, all passing at v1.0.1 (30 Oct).
 
 ### Live evenings
 
