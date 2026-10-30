@@ -2,7 +2,7 @@
 
 Steward is a self-hosted gatekeeper between the AI agents you run and everything they can reach: models, tools and each other. It is built for the Nebius x NVIDIA Global AI Hackathon, Personal AI track.
 
-Status: Phase 3 (overnight watcher, morning brief, contain controls and the public demo) and the lean Phase 4 (a comparison of Steward's code checks with a Nemotron judge) are built, 29 Oct 2026. Steward holds risky calls for your approval, applies the rules below in code, plays the Manchester evening live against the real agents and replays it from the flight log. Public demo: https://13-49-146-96.sslip.io (a recorded evening, nothing there calls a model). The Results section has the trap suite, the live evenings and the comparison. The red-team runs were cut for time.
+Status: Phase 3 (overnight watcher, morning brief, contain controls and the public demo) and the lean Phase 4 (a comparison of Steward's code checks with a Nemotron judge) are built and released as v1.0.1, the hackathon submission (30 Oct 2026). Steward holds risky calls for your approval, applies the rules below in code, plays the Manchester evening live against the real agents and replays it from the flight log. Public demo: https://13-49-146-96.sslip.io (a recorded evening, nothing there calls a model). The Results section has the trap suite, the live evenings and the comparison. The red-team runs were cut for time.
 
 ## The problem
 
@@ -261,7 +261,7 @@ Limits: a small set (50 cases), one prompt, two models and synthetic data. Jev, 
 | 1 The two doors                        | Every model call, tool call and agent-to-agent message goes through Steward and lands in the log.     |
 | 2 Rules, holds and approvals           | The Manchester evening runs live and as a replay, and every trap is held or refused.                  |
 | 3 Supervisor and hosted demo           | Done: overnight watcher, morning brief, contain controls and phishing screen. Anyone with the link can try replay and playground. |
-| 4 (current) Proof (lean)               | Done 29 Oct: code checks against a Nemotron judge (Super VL and Lightning) on the same asks and replies (Results). Jev, rewordings and the ConVerse set are cut. |
+| 4 Proof (lean)                         | Done 29 Oct: code checks against a Nemotron judge (Super VL and Lightning) on the same asks and replies (Results). Jev, rewordings and the ConVerse set are cut. |
 
 ## Repository layout
 
