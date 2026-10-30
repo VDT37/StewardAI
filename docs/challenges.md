@@ -320,7 +320,7 @@ Problem: In the Telegram tests the brief writer described a held call as a held 
 
 How we approached: Each count now has a name that says what it counts (calls_held_for_owner, asks_held_by_daily_limit_or_burst, requests_answered, calls_refused). A copied field name now fails the check and sends the brief to the template.
 
-Result: After the change, 5 of 6 attempts passed the check, on run 6's facts and on a quiet live night, and 1 was rejected for a field name and fell back to the template. The bundled live recording was made before the change, so its brief still reads "asks_held 6" and has no Spend line. A replay keeps the recorded text.
+Result: After the change, 5 of 6 attempts passed the check, on run 6's facts and on a quiet live night, and 1 was rejected for a field name and fell back to the template. The bundled live recording is now run 10, made after the change: its brief reads "asks held by daily limit or burst 6", though the model still left out the Spend line. A replay keeps the recorded text.
 
 ### A dollar amount was read as a clock time
 
