@@ -108,3 +108,63 @@ def test_a_held_call_is_asked_once(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     assert "Held for you" in night_card["text"] and night_card["reply_markup"] is not None
     assert out["press"] == "Done: the hold is now denied." and out["night_state"] == "denied"
     assert sum("Denied</b>" in e["text"] for e in out["edited"]) == 3
+
+
+def test_calls_held_overnight_arrive_as_cards_after_the_brief(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Three calls held by the same rule in the quiet hours: the brief asks about one, and
+    the other two share one card after it, whose Deny decides both. Nothing is sent while
+    the owner sleeps."""
+    monkeypatch.setattr(telegram_cards, "SEND_GAP_S", 0)
+
+    async def scenario() -> dict[str, Any]:
+        clock = story_clock(-1, "23:30")
+        async with running(tmp_path, clock=clock) as (_, rt, _):
+            assert rt.scheduler is not None
+            bot = FakeBot()
+            cards = TelegramCards("1:fake", 42, rt)
+            cards._app = SimpleNamespace(bot=bot)
+            rt.holds.listeners.append(cards.on_hold)
+            rt.extras["telegram"] = cards
+            out: dict[str, Any] = {}
+            held = [
+                await call(rt, "work", "todo_delete_item", {"id": item})
+                for item in ("todo-pack", "todo-expenses", "todo-present")
+            ]
+            await asyncio.sleep(0.05)
+            out["sent_at_night"] = len(bot.sent)
+            clock.set(story(0, "07:30"), rate=0)
+            await rt.scheduler.run_job("brief", clock.now())
+            out["sent"] = list(bot.sent)
+            group = next(m for m in bot.sent if "Held while you slept" in m["text"])
+            deny = next(
+                b.callback_data
+                for b in group["reply_markup"].inline_keyboard[0]
+                if b.text.startswith("Deny")
+            )
+            out["labels"] = [b.text for b in group["reply_markup"].inline_keyboard[0]]
+            out["press"] = await cards.handle_press(42, deny)
+            await asyncio.sleep(0.05)
+            out["states"] = [
+                rt.holds.get(r.structured_content["hold_id"]).state  # type: ignore[union-attr]
+                for r in held
+            ]
+            out["edited"] = list(bot.edited)
+            return out
+
+    out = asyncio.run(scenario())
+    assert out["sent_at_night"] == 0
+    texts = [m["text"] for m in out["sent"]]
+    brief_at = next(i for i, t in enumerate(texts) if "Morning brief" in t)
+    group_at = next(i for i, t in enumerate(texts) if "Held while you slept" in t)
+    assert brief_at < group_at
+    assert out["labels"] == ["Allow once (all 2)", "Deny (all 2)"]
+    assert out["press"].startswith("Done") and sorted(out["states"]) == [
+        "denied",
+        "denied",
+        "pending",
+    ]
+    assert any(
+        "Held while you slept" in e["text"] and "Denied</b>" in e["text"] for e in out["edited"]
+    )

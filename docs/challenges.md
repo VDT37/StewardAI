@@ -336,7 +336,7 @@ Problem: A demo with a model behind it would need a Nebius key and an owner's St
 
 How we approached: The demo is literally a replay. `steward demo serve` replays each bundled recording into its own in-memory Steward, one replayed Steward per recording, and the console reads it through read-only routes. Replay copies the story's beats into the replayed log (they are not compared), so the demo shows the beats and its approval cards say what prompted them.
 
-Result: The Recorder page's "Re-run the replay on the server" answers "Identical: 156 decisions matched" for the live recording (run 8; it read 158 for run 7), and a POST to an owner route gets 403.
+Result: The Recorder page's "Re-run the replay on the server" answers "Identical: 156 decisions matched" for the live recording (run 10; it read 158 for run 7), and a POST to an owner route gets 403.
 
 ### The Telegram bot token reached the service log
 
