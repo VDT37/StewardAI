@@ -3,9 +3,9 @@
     {
       "name": "live",
       "file": "live.jsonl",
-      "label": "Live evening: real agents on Nemotron 3.5",
+      "label": "Live evening: real agents on Nemotron 3.5, decided in Telegram",
       "kind": "live",
-      "session_id": "s-20261029-075358-e1f8"
+      "session_id": "s-20261029-193002-4f94"
     },
     {
       "name": "scripted",
